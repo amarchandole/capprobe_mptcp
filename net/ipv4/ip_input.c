@@ -154,17 +154,17 @@
 #include <net/net_namespace.h>
 
 //cs218 
-static int cap_icmp_sn = 0;
+static int cap_icmp_serialnum = 0;
 static int cap_index = 0;
-static int burst_size = 100;
+static int burst_size = 50;
 
-extern long cap_sn[CLJ_MAX];
-extern long cap_send_sec[CLJ_MAX];
-extern long cap_send_usec[CLJ_MAX];
-extern long cap_recv1_sec[CLJ_MAX];
-extern long cap_recv1_usec[CLJ_MAX];
-extern long cap_recv2_sec[CLJ_MAX];
-extern long cap_recv2_usec[CLJ_MAX];
+extern long cap_serialnum[MAX_BURST_SIZE];
+extern long cap_send_sec[MAX_BURST_SIZE];
+extern long cap_send_usec[MAX_BURST_SIZE];
+extern long cap_recv1_sec[MAX_BURST_SIZE];
+extern long cap_recv1_usec[MAX_BURST_SIZE];
+extern long cap_recv2_sec[MAX_BURST_SIZE];
+extern long cap_recv2_usec[MAX_BURST_SIZE];
 extern long cap_size;
 extern long cap_id;
 extern long cap_C;		//cs218_prob
@@ -205,7 +205,8 @@ bool ip_call_ra_chain(struct sk_buff *skb)
 				if (ip_defrag(skb, IP_DEFRAG_CALL_RA_CHAIN))
 					return true;
 			}
-			if (last) {
+			if (last) 
+			{
 				struct sk_buff *skb2 = skb_clone(skb, GFP_ATOMIC);
 				if (skb2)
 					raw_rcv(last, skb2);
@@ -214,7 +215,8 @@ bool ip_call_ra_chain(struct sk_buff *skb)
 		}
 	}
 
-	if (last) {
+	if (last) 
+	{
 		raw_rcv(last, skb);
 		return true;
 	}
@@ -513,7 +515,7 @@ void capprobe_main(unsigned long packet_pairs_sent)
 
     do_gettimeofday(&tv);
 
-    if (packet_pairs_sent>burst_size) 
+    if (packet_pairs_sent > burst_size) 
     	return;
 
     if (packet_pairs_sent == 1) 
@@ -525,9 +527,9 @@ void capprobe_main(unsigned long packet_pairs_sent)
     if (cap_size < 100)
     	cap_size = CAP_INIT_SIZE_1; //CAP_INIT_SIZE_1 = 1200
 
-    cap_icmp_sn ++;
-    cap_icmp_sn %= 128;
-    cap_sn[cap_index] = cap_icmp_sn;
+    cap_icmp_serialnum ++;
+    cap_icmp_serialnum %= 128;
+    cap_serialnum[cap_index] = cap_icmp_serialnum;
     cap_send_sec[cap_index] = tv.tv_sec;
     cap_send_usec[cap_index] = tv.tv_usec;
     cap_recv1_sec[cap_index] = -1;
@@ -535,46 +537,61 @@ void capprobe_main(unsigned long packet_pairs_sent)
     cap_recv2_sec[cap_index] = -1;
     cap_recv2_usec[cap_index] = -1;
     cap_index++;
-    cap_index %= CLJ_MAX;	//50
+    cap_index %= burst_size;
 
+    //status of last packet transmission
     last_ok = 1;
-    for(i=0; i<2; i++) {
-        if (last_ok) {
-            //if (cap_skb) kfree_skb(cap_skb);
+
+    //send packet pair
+    for(i=0; i<2; i++) 
+    {
+        if (last_ok) 
+        {
+            //if (cap_skb) kfree_skb(cap_skb);		 -remove while testing if not needed
             fill_packet();
-        } else {
+        } 
+        else 
+        {
             i--;
         }
 
         /*spin_lock_bh(&cap_dev->tx_global_lock);*/
         __netif_tx_lock_bh(cap_dev->_tx);
-        if (!netif_queue_stopped(cap_dev)) {
+        if (!netif_queue_stopped(cap_dev)) 
+        {
             atomic_inc(&cap_skb->users);
 
             int *ret_val;
             cap_skb = dev_hard_start_xmit(cap_skb,cap_dev,cap_dev->_tx,ret_val);
-            if (*ret_val) {
+            if (*ret_val) 
+            {
                 atomic_dec(&cap_skb->users);
-                if (net_ratelimit()) {
+                if (net_ratelimit()) 
+                {
                     printk(KERN_INFO "Hard xmit error\n");
                 }
                 last_ok = 0;
-            } else last_ok = 1;
-        } else last_ok = 0;
+            } 
+            else last_ok = 1;
+        } 
+        else last_ok = 0;
 
-        if (last_ok&&i==0) {
-            cap_icmp_sn ++;
-            cap_icmp_sn %= 128;
+        if (last_ok&&i==0) 
+        {
+            cap_icmp_serialnum ++;
+            cap_icmp_serialnum %= 128;
         }
         __netif_tx_unlock_bh(cap_dev->_tx);
         /*spin_unlock_bh(&cap_dev->tx_global_lock);*/
     }
 
-    if (cap_recv_num < 5) {
-        if (cap_RTT2 >= 10000000000)
+    if (cap_recv_num < 5) 
+    {
+        if (cap_RTT2 >= TOO_LARGE_DELAY)
         	mod_timer(&tl, jiffies + msecs_to_jiffies(500));
             /*tl.expires = jiffies + 0.5 * HZ; // 0.5 second //cs218_prob*/
-        else {
+        else 
+        {
             if (rtt2 < 5*cap_RTT2)
 				mod_timer(&tl, usecs_to_jiffies(rtt2) + msecs_to_jiffies(25*rtt2/1000));	//cs218_prob..some precision lost
                 //tl.expires = jiffies + (rtt2 * 1.25 / 1000000) *HZ; // cap_RTT2 second (double removed)
@@ -582,7 +599,9 @@ void capprobe_main(unsigned long packet_pairs_sent)
             	mod_timer(&tl, jiffies + msecs_to_jiffies(500));
                 /*tl.expires = jiffies + 0.5 *HZ;	*/
         }
-    } else {
+    } 
+    else 
+    {
         long send_rate = cap_C * 5 / 100; // Mbps; 5% of capacity //cs218_prob
         long pp_interval = cap_size * 8 / send_rate / 1000000; // ms  //double replaced by int here //cs218_prob
 
@@ -642,18 +661,18 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, struct iphdr 
         pksize += 14;   // ethernet header
 
         if (pksize>0&&pksize==cap_size&&id==cap_id) {
-            for (kk=0; kk<CLJ_MAX; kk++) {
-                if (clj==cap_sn[kk]) { // 1st packet of the packet pair
+            for (kk=0; kk<MAX_BURST_SIZE; kk++) {
+                if (clj==cap_serialnum[kk]) { // 1st packet of the packet pair
                     cap_recv1_sec[kk] = tv.tv_sec;
                     cap_recv1_usec[kk] = tv.tv_usec;
                     break;
-                } else if (clj==cap_sn[kk]+1) { // 2nd packet of the packet pair
+                } else if (clj==cap_serialnum[kk]+1) { // 2nd packet of the packet pair
                     cap_recv2_sec[kk] = tv.tv_sec;
                     cap_recv2_usec[kk] = tv.tv_usec;
                     if (cap_recv1_sec[kk]>0 && cap_recv1_usec[kk]>0) {
-                        disp = 1000000 * (cap_recv2_sec[kk] - cap_recv1_sec[kk]) + (cap_recv2_usec[kk] - cap_recv1_usec[kk]);
-                        rtt1 = 1000000 * (cap_recv1_sec[kk] - cap_send_sec[kk]) + (cap_recv1_usec[kk] - cap_send_usec[kk]);
-                        rtt2 = 1000000 * (cap_recv2_sec[kk] - cap_send_sec[kk]) + (cap_recv2_usec[kk] - cap_send_usec[kk]);
+                        disp = SEC_TO_USEC * (cap_recv2_sec[kk] - cap_recv1_sec[kk]) + (cap_recv2_usec[kk] - cap_recv1_usec[kk]);
+                        rtt1 = SEC_TO_USEC * (cap_recv1_sec[kk] - cap_send_sec[kk]) + (cap_recv1_usec[kk] - cap_send_usec[kk]);
+                        rtt2 = SEC_TO_USEC * (cap_recv2_sec[kk] - cap_send_sec[kk]) + (cap_recv2_usec[kk] - cap_send_usec[kk]);
                         rtt = rtt1 + rtt2;
                         if (disp>0&&rtt1>0&&rtt2>0&&rtt>0&&rtt<100000000) {
                             C = 8 * pksize / (double)disp;	// Mbps			//cs218_prob
@@ -701,7 +720,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, struct iphdr 
                     break;
                 } else continue;
             }
-            if (cap_C_same2>=CAP_SAME_MAX||(cap_recv_num>=CAP_SAMPLES&&kk<CLJ_MAX&&cap_C_same>=CAP_SAME)) {
+            if (cap_C_same2>=CAP_SAME_MAX||(cap_recv_num>=CAP_SAMPLES&&kk<MAX_BURST_SIZE&&cap_C_same>=CAP_SAME)) {
 
                 double diff_cap_RTT_SUM = cap_RTT_SUM - cap_RTT1 - cap_RTT2;
                 diff_cap_RTT_SUM /= cap_RTT_SUM;
@@ -787,17 +806,17 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, struct iphdr 
                     }
                     // re-initialize
                     cap_id++;
-                    cap_RTT_SUM = 10000000000;
-                    cap_RTT1 = 10000000000;
-                    cap_RTT2 = 10000000000;
+                    cap_RTT_SUM = TOO_LARGE_DELAY;
+                    cap_RTT1 = TOO_LARGE_DELAY;
+                    cap_RTT2 = TOO_LARGE_DELAY;
                     cap_C_min = 100000000;
                     cap_C_max = 0;
                     cap_C_same = 0;
                     cap_C_same2 = 0;
                     cap_C = 0;
                     cap_recv_num = 0;
-                    for (i=0; i<CLJ_MAX; i++) {
-                        cap_sn[i] = -1;
+                    for (i=0; i<MAX_BURST_SIZE; i++) {
+                        cap_serialnum[i] = -1;
                         cap_send_sec[i] = -1;
                         cap_send_usec[i] = -1;
                     }
@@ -813,15 +832,15 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, struct iphdr 
                         // re-initialize
 
                         cap_id++;
-                        cap_RTT_SUM = 10000000000;
-                        cap_RTT1 = 10000000000;
-                        cap_RTT2 = 10000000000;
+                        cap_RTT_SUM = TOO_LARGE_DELAY;
+                        cap_RTT1 = TOO_LARGE_DELAY;
+                        cap_RTT2 = TOO_LARGE_DELAY;
                         cap_C_min = 100000000;
                         cap_C_max = 0;
                         cap_C = 0;
                         cap_recv_num = 0;
-                        for (i=0; i<CLJ_MAX; i++) {
-                            cap_sn[i] = -1;
+                        for (i=0; i<MAX_BURST_SIZE; i++) {
+                            cap_serialnum[i] = -1;
                             cap_send_sec[i] = -1;
                             cap_send_usec[i] = -1;
                         }
@@ -831,12 +850,6 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, struct iphdr 
         }
     }
 }
-
-/*static int fill_packet()
-{
-    return 0;
-}
-*/
 
 static int fill_packet()
 {
@@ -853,11 +866,13 @@ static int fill_packet()
     u_short answer ;
 
 
-    if (cap_skb) {
+    if (cap_skb) 
+    {
         kfree_skb(cap_skb);
     }
     cap_skb = alloc_skb(cap_size+64+16,GFP_ATOMIC);
-    if (!cap_skb) {
+    if (!cap_skb) 
+    {
         printk(KERN_ERR "No memory");
         return 0;
     }
@@ -878,7 +893,7 @@ static int fill_packet()
     eth[12] = 0x08;
     eth[13] = 0x00;
     /*
-    	printk(KERN_ERR "%ld %ld %d, eth: ",cap_size, cap_id, cap_icmp_sn);
+    	printk(KERN_ERR "%ld %ld %d, eth: ",cap_size, cap_id, cap_icmp_serialnum);
     	for(ii=0;ii<14;ii++) printk(KERN_ERR "%d ",eth[ii]);
     	printk(KERN_ERR "\n");
     */
@@ -887,7 +902,7 @@ static int fill_packet()
     icmph->type = ICMP_ECHO;
     icmph->code = 0;
     icmph->un.echo.id = cap_id;
-    icmph->un.echo.sequence = htons(cap_icmp_sn);
+    icmph->un.echo.sequence = htons(cap_icmp_serialnum);
     icmp_len = datalen + 8;
 
     iph->ihl = 5;
@@ -1002,10 +1017,10 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
 	cap_size = CAP_INIT_SIZE_1;
 	cap_phase = CAP_PHASE_1;
 	cap_id = 101;
-	cap_icmp_sn = 0;
-	cap_RTT_SUM = 10000000000;
-	cap_RTT1 = 10000000000;
-	cap_RTT2 = 10000000000;
+	cap_icmp_serialnum = 0;
+	cap_RTT_SUM = TOO_LARGE_DELAY;
+	cap_RTT1 = TOO_LARGE_DELAY;
+	cap_RTT2 = TOO_LARGE_DELAY;
 	cap_C_min = 100000000;
 	cap_C_max = 0;
 	cap_C = 0;
@@ -1013,8 +1028,8 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
 	cap_var = 0;
 	cap_recv_num = 0;
 
-	for (i=0;i<CLJ_MAX;i++) {
-		cap_sn[i] = -1;
+	for (i=0;i<MAX_BURST_SIZE;i++) {
+		cap_serialnum[i] = -1;
 		cap_send_sec[i] = -1;
 		cap_send_usec[i] = -1;
 	}
@@ -1052,6 +1067,7 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
     return k;
 }
 
+/*
 static struct proc_dir_entry *proc_capprobe;
 static struct proc_dir_entry *proc_capprobe_if;
 static char *dirname = "capprobe";
@@ -1067,25 +1083,6 @@ static const struct file_operations proc_file_fops_capprobe_if = {
 	.read  = read_proc_capprobe_if,
 	.write  = write_proc_capprobe_if,
 };
-
-/*static inline struct proc_dir_entry *proc_create(
-        const char *name, umode_t mode, struct proc_dir_entry *parent,
-        const struct file_operations *proc_fops)
- {
-        return proc_create_data(name, mode, parent, proc_fops, NULL);
- }
-
-struct proc_dir_entry *proc_file_entry;
-
-
-int __init init_module(void){
-  proc_file_entry = proc_create("proc_file_name", 0, NULL, &proc_file_fops);
-  if(proc_file_entry == NULL)
-   return -ENOMEM;
-  return 0;
-}
-
- */
 
 int remove_proc_dir(void)
 {
@@ -1115,18 +1112,6 @@ static int __init capprobe_init(void)
     proc_create("probe_info", 0, proc_capprobe, &proc_file_fops_capprobe);
     proc_create("device", 0, proc_capprobe, &proc_file_fops_capprobe_if);
 
-	/*sprintf(buf,"sys/capprobe/CapProbe");
-	proc_capprobe = create_proc_entry(buf,0644,0);
-	proc_capprobe->read_proc = read_proc_capprobe;
-	proc_capprobe->write_proc = write_proc_capprobe;
-	proc_capprobe->owner = THIS_MODULE;
-
-	sprintf(buf,"capprobe/device");
-	proc_capprobe_if = create_proc_entry(buf,0644,0);
-	proc_capprobe_if->read_proc = read_proc_capprobe_if;
-	proc_capprobe_if->write_proc = write_proc_capprobe_if;
-	proc_capprobe_if->owner = THIS_MODULE;*/
-
 	return 0;
 }
 
@@ -1138,4 +1123,4 @@ static void __exit capprobe_cleanup(void)
 }
 
 module_init(capprobe_init);
-module_exit(capprobe_cleanup);
+module_exit(capprobe_cleanup);*/
