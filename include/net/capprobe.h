@@ -64,5 +64,5 @@ int cap_C_same2 = 0;
 #endif
 
 void capprobe_main(unsigned long);
-
+void process_capprobe(struct sk_buff*, struct net_device*, const struct iphdr*);
 static int fill_packet(void);
