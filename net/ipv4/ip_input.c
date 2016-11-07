@@ -510,7 +510,7 @@ out:
 void capprobe_main(unsigned long packet_pairs_sent) 
 {
     int i, last_ok;
-    int *ret_val;
+    int ret_val = 0;
     struct timeval tv;
 
     do_gettimeofday(&tv);
@@ -562,40 +562,83 @@ void capprobe_main(unsigned long packet_pairs_sent)
             i--;
         }
 
-        /*spin_lock_bh(&cap_dev->tx_global_lock);*/
-        __netif_tx_lock_bh(cap_dev->_tx);
-        if (!netif_queue_stopped(cap_dev)) 
-        {
-            atomic_inc(&cap_skb->users);
+        // spin_lock_bh(&cap_dev->tx_global_lock);
+        // /*__netif_tx_lock_bh(cap_dev->_tx);*/
+        // if (!netif_queue_stopped(cap_dev)) 
+        // {
+        //     atomic_inc(&cap_skb->users);
+        //     cap_skb = dev_hard_start_xmit(cap_skb,cap_dev,cap_dev->_tx,&ret_val);	//cs218 check if problem later
+        //     if (ret_val) 
+        //     {
+        //         atomic_dec(&cap_skb->users);
+        //         if (net_ratelimit()) 
+        //         {
+        //             printk(KERN_INFO "Hard xmit error\n");
+        //         }
+        //         last_ok = 0;
 
-            ret_val = NULL;
-            cap_skb = dev_hard_start_xmit(cap_skb,cap_dev,cap_dev->_tx,ret_val);	//cs218 check if problem later
-            if (*ret_val) 
-            {
-                atomic_dec(&cap_skb->users);
-                if (net_ratelimit()) 
-                {
-                    printk(KERN_INFO "Hard xmit error\n");
-                }
-                last_ok = 0;
-            } 
-            else
-            {
-            	last_ok = 1;
-            }
-        } 
-        else 
+        //         printk(KERN_INFO "Hard xmit in the loop1\n");
+        //     } 
+        //     else
+        //     {
+        //     	last_ok = 1;
+
+        //     	printk(KERN_INFO "Hard xmit in the loop2\n");
+        //     }
+	       //  printk(KERN_INFO "Hard xmit in the loop3\n");
+        // } 
+        // else 
+        // {
+        // 	last_ok = 0;
+        // }
+
+        int cpu = smp_processor_id(); /* ok because BHs are off */
+
+        if (cap_dev->_tx->xmit_lock_owner != cpu) 
         {
-        	last_ok = 0;
-        }
+
+			HARD_TX_LOCK(cap_dev, cap_dev->_tx, cpu);
+			if (!netif_xmit_stopped(cap_dev->_tx)) 
+			{
+				__this_cpu_inc(xmit_recursion);
+				  cap_skb = dev_hard_start_xmit(cap_skb, cap_dev, cap_dev->_tx, &ret_val);
+				__this_cpu_dec(xmit_recursion);
+
+				if (dev_xmit_complete(ret_val)) 
+				{
+					last_ok = 1;
+					printk(KERN_INFO "hard transmit success!!!!!!!!!!!!");
+					HARD_TX_UNLOCK(cap_dev, cap_dev->_tx);
+					goto out;
+				}
+				else
+				{
+					printk(KERN_INFO "hard transmit failed!!!!!!!!!!!!");
+				}
+			}
+
+			HARD_TX_UNLOCK(cap_dev, cap_dev->_tx);
+			printk(KERN_INFO "netif_xmit_stopped!!!!!!!!!!!!");
+			net_crit_ratelimited("Virtual device %s asks to queue packet!\n",cap_dev->name);
+			last_ok = 0;
+		} 
+		else 
+		{
+			last_ok = 0;
+			printk(KERN_INFO "cpu owner!!!!!!!!!!!!");
+		}
+
+		out:
+
+
 
         if (last_ok && i==0) 			//if first packet in packet pair is sent properly, inc the cap_icmp_serialnum
         {
             cap_icmp_serialnum ++;
             cap_icmp_serialnum %= 128;
         }
-        __netif_tx_unlock_bh(cap_dev->_tx);
-        /*spin_unlock_bh(&cap_dev->tx_global_lock);*/
+        //__netif_tx_unlock_bh(cap_dev->_tx);
+        //spin_unlock_bh(&cap_dev->tx_global_lock);
     }
 
     //modify the timer_list expiry time with a new time that is current time + burst_interval
@@ -1034,6 +1077,7 @@ static int write_proc_capprobe_if(struct file* file, const char* buffer, unsigne
 	memset(buf,0,1000);
 	copy_from_user(cap_device, buffer, count);
 	cap_device[count-1] = '\0';
+        printk(KERN_INFO "the count is %d and the string is %s", count, cap_device);
     
     ////MOD_DEC_USE_COUNT;
 	return k;
@@ -1079,9 +1123,9 @@ static void initialise_capprobe_variables(int id)
 static int write_proc_capprobe(struct file* file, const char* buffer, unsigned long count, void* data)
 {
 	int i;
-	char burst_size_buff[20];			//number of packet pairs in a burst (capprobe run)
-	char burst_interval_buff[20];		//interval between 2 capprobe bursts
-	char dest_ip[40];					//stores destination ip address in kernel space as received from user space buffer, temporarily
+	char burst_size_buff[100];			//number of packet pairs in a burst (capprobe run)
+	char burst_interval_buff[100];		//interval between 2 capprobe bursts
+	char dest_ip[200] = "47.152.22.105";					//stores destination ip address in kernel space as received from user space buffer, temporarily
 	int start_capprobe_after = 500;		//start capprobe after this time period (in ms)
 
 	initialise_capprobe_variables(101);
@@ -1096,12 +1140,12 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
     //get the destination machine's ip address and burst size from the buffer and store it as cap_dst
 	del_timer(&tl);		//clear timer, if exists
 
-	memset(burst_size_buff, 0, 20);
-	memset(burst_interval_buff, 0, 20);
-	memset(dest_ip, 0, 40);
+	memset(burst_size_buff, 0, 100);
+	memset(burst_interval_buff, 0, 100);
+	memset(dest_ip, 0, 200);
 
 	copy_from_user(dest_ip, buffer, count);
-	dest_ip[count] = '\0';
+	dest_ip[count-1] = '\0';
 
 	//calculate burst size and seperate it from destination ip
 	for (i=0; dest_ip[i]!='\0'; i++) 
@@ -1125,9 +1169,16 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
 		}
 	}
 
+	printk(KERN_INFO "the ip address parsed is %s", dest_ip);
+
 	cap_dst = in_aton(dest_ip);					//Convert an ASCII string to binary IP.
 	kstrtol(burst_size_buff, 10, &burst_size);	//get burst_size in int
 	kstrtol(burst_interval_buff, 10, &burst_interval);	//get burst_interval in int
+
+	// burst_size = 100;
+	// burst_interval = 100;
+	//printk(KERN_INFO "the burst size is %d", burst_size);
+	//printk(KERN_INFO "the burst interval is %d", burst_interval);
 
 	//validation for upper limit of burst_size
 	if (burst_size > MAX_BURST_SIZE)
@@ -1181,17 +1232,17 @@ static int __init capprobe_init(void)
 	cap_phase = CAP_PHASE_1;
 	cap_id = 101;
 	strcpy(cap_device,"eth0");
-
-    proc_capprobe = proc_create("probe_info", 0, NULL, &proc_file_fops_capprobe);
-    proc_capprobe_if = proc_create("device", 0, NULL, &proc_file_fops_capprobe_if);
+    printk(KERN_INFO "!!!!!!!!!!!! init called !!!!!!!!!!!!!!!!!!!!\n");
+    proc_capprobe = proc_create("probe_info", 0644, NULL, &proc_file_fops_capprobe);
+    proc_capprobe_if = proc_create("device", 0644, NULL, &proc_file_fops_capprobe_if);
 
 	return 0;
 }
 
 static void __exit capprobe_cleanup(void)
 {
-    remove_proc_entry("capprobe/probe_info", NULL);
-    remove_proc_entry("capprobe/device", NULL);
+    remove_proc_entry("probe_info", NULL);
+    remove_proc_entry("device", NULL);
 }
 
 module_init(capprobe_init);
