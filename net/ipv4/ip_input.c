@@ -156,7 +156,7 @@
 #include <net/net_namespace.h>
 #include <linux/kernel.h>
 
-static long burst_size = 50;			//default value. changed as per user input into /sys/capprobe/device later
+static long burst_size = 10;			//default value. changed as per user input into /sys/capprobe/device later
 static long burst_interval = 500;	//default value. changed as per user input into /sys/capprobe/device later
 static int cap_icmp_serialnum = 0;
 static int cap_index = 0;
@@ -607,13 +607,13 @@ void capprobe_main(unsigned long packet_pairs_sent)
 				if (dev_xmit_complete(ret_val)) 
 				{
 					last_ok = 1;
-					printk(KERN_INFO "hard transmit success!!!!!!!!!!!!");
+					printk(KERN_INFO "hard transmit success\n");
 					HARD_TX_UNLOCK(cap_dev, cap_dev->_tx);
 					goto out;
 				}
 				else
 				{
-					printk(KERN_INFO "hard transmit failed!!!!!!!!!!!!");
+					printk(KERN_INFO "hard transmit failed!!!!!");
 				}
 			}
 
@@ -831,9 +831,9 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                         {
                             del_timer(&tl);
                             cap_size = 0;
-                           /* printk(KERN_ERR "CapProbe Finished! Total time = %ld.%06ld sec C = %ld.%03ld\n",
+                            printk(KERN_ERR "CapProbe Finished! Total time = %ld.%06ld sec C = %ld.%03ld\n",
                                    total_time/1000000, total_time % 1000000,
-                                   ((long)(avg_c*10))/10, (long)(avg_c*1000)%1000);*/
+                                   ((long)(avg_c*10))/10, (long)(avg_c*1000)%1000);
                         } 
                         else 
                         {
@@ -963,8 +963,9 @@ static int fill_packet()
     {
         kfree_skb(cap_skb);
     }
+
     //allocate memory for capprobe socket_buffer
-    cap_skb = alloc_skb(cap_size+64+16,GFP_ATOMIC);
+    cap_skb = alloc_skb(64+16,GFP_ATOMIC);
 
     //error check
    	if (!cap_skb) 
@@ -975,31 +976,24 @@ static int fill_packet()
 
     //reverse 16 blocks memory for cap_skb  		- cs218 reason not known yet
     skb_reserve(cap_skb, 16);
+    //skb_reset_network_header(cap_skb);
 
     /*  Reserve for ethernet and IP header  */
     eth = (__u8 *) skb_push(cap_skb, 14);
     iph = (struct iphdr *)skb_put(cap_skb, sizeof(struct iphdr));
-    icmph = (struct icmphdr *)skb_put(cap_skb, sizeof(struct icmphdr));
 
     //ethernet device address info captured and added to cap_skb		cs218: do we need to modify it to wireless interface?
     memcpy(eth+6, (const void *)cap_dev->dev_addr, 6);
-    eth[0] = 0x00;
-    eth[1] = 0x00;
-    eth[2] = 0x0C;
-    eth[3] = 0x07;
-    eth[4] = 0xAC;
-    eth[5] = 0x88;
+    eth[0] = 0x08;
+    eth[1] = 0x95;
+    eth[2] = 0x2A;
+    eth[3] = 0x6E;
+    eth[4] = 0x18;
+    eth[5] = 0xB6;
     eth[12] = 0x08;
     eth[13] = 0x00;
 
-    datalen = cap_size - 14 - 20 - 8; /* Eth + IPh + ICMPh*/
-
-    icmph->type = ICMP_ECHO;
-    icmph->code = 0;
-    icmph->un.echo.id = cap_id;
-    icmph->un.echo.sequence = htons(cap_icmp_serialnum);
-    icmp_len = datalen + 8;
-
+    datalen = 0; /* Eth + IPh + ICMPh*/
     iph->ihl = 5;
     iph->version = 4;
     iph->ttl = 64;
@@ -1007,25 +1001,29 @@ static int fill_packet()
     iph->protocol = IPPROTO_ICMP; /* ICMP */
     iph->saddr = cap_src;
     iph->daddr = cap_dst;
-    
     iph->frag_off = 0x0040;
     iplen = 20 + 8 + datalen;
-
-    //The htons() function converts the unsigned short integer hostshort from host byte order to network byte order.
     iph->tot_len = htons(iplen);
     iph->check = 0;
     iph->check = ip_fast_csum((void *) iph, iph->ihl);
+    icmph = (struct icmphdr *)skb_put(cap_skb, sizeof(struct icmphdr));
+    icmph->type = ICMP_ECHO;
+    icmph->code = 0;
+    icmph->un.echo.id = 0;
+    icmph->un.echo.sequence = 0;
+    icmp_len = 8;
+    icmph->checksum = 0;
+
     cap_skb->protocol = __constant_htons(ETH_P_IP);
-    cap_skb->mac_header = ((u8 *)iph) - 14;		//.raw removed cs218_prob
     cap_skb->dev = cap_dev;
     cap_skb->pkt_type = PACKET_HOST;
-    skb_put(cap_skb, datalen);
+	skb_put(cap_skb, datalen);
 
-    icmph->checksum = 0;
+
 //============================================================================== cs218 needs review!
 
     w = (u_short *)icmph;
-    len = icmp_len;
+    len = iph->tot_len - sizeof(struct iphdr);
     sum = 0;
     nleft = len;
     answer = 0;
@@ -1058,6 +1056,11 @@ static int fill_packet()
 
     return 1;
 }
+
+// static int fill_packet()
+// {
+
+// }
 
 //CapProbe proc file related code
 static int read_proc_capprobe_if(char *buf, char **start, off_t offset, int count, int *eof, void *priv)
@@ -1125,7 +1128,7 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
 	int i;
 	char burst_size_buff[100];			//number of packet pairs in a burst (capprobe run)
 	char burst_interval_buff[100];		//interval between 2 capprobe bursts
-	char dest_ip[200] = "47.152.22.105";					//stores destination ip address in kernel space as received from user space buffer, temporarily
+	char dest_ip[200] = "131.179.38.222";					//stores destination ip address in kernel space as received from user space buffer, temporarily
 	int start_capprobe_after = 500;		//start capprobe after this time period (in ms)
 
 	initialise_capprobe_variables(101);
