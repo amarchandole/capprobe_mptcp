@@ -965,7 +965,7 @@ static int fill_packet()
     }
 
     //allocate memory for capprobe socket_buffer
-    cap_skb = alloc_skb(64+16,GFP_ATOMIC);
+    cap_skb = alloc_skb(cap_size + 64+16,GFP_ATOMIC);
 
     //error check
    	if (!cap_skb) 
@@ -981,6 +981,7 @@ static int fill_packet()
     /*  Reserve for ethernet and IP header  */
     eth = (__u8 *) skb_push(cap_skb, 14);
     iph = (struct iphdr *)skb_put(cap_skb, sizeof(struct iphdr));
+    //icmph = (struct icmphdr *)skb_put(cap_skb, sizeof(struct icmphdr));
 
     //ethernet device address info captured and added to cap_skb		cs218: do we need to modify it to wireless interface?
     memcpy(eth+6, (const void *)cap_dev->dev_addr, 6);
@@ -993,7 +994,7 @@ static int fill_packet()
     eth[12] = 0x08;
     eth[13] = 0x00;
 
-    datalen = 0; /* Eth + IPh + ICMPh*/
+    datalen = cap_size - 14 - 20 - 8; /* Eth + IPh + ICMPh*/
     iph->ihl = 5;
     iph->version = 4;
     iph->ttl = 64;
@@ -1009,12 +1010,14 @@ static int fill_packet()
     icmph = (struct icmphdr *)skb_put(cap_skb, sizeof(struct icmphdr));
     icmph->type = ICMP_ECHO;
     icmph->code = 0;
-    icmph->un.echo.id = 0;
-    icmph->un.echo.sequence = 0;
-    icmp_len = 8;
+    icmph->un.echo.id = cap_id;
+    icmph->un.echo.sequence = htons(cap_icmp_serialnum);
+    icmp_len = datalen + 8;
     icmph->checksum = 0;
 
     cap_skb->protocol = __constant_htons(ETH_P_IP);
+    //cap_skb->mac_header = ((__u16 *)iph) - 14;
+    //cap_skb->network_header = ((__u16 *)iph);
     cap_skb->dev = cap_dev;
     cap_skb->pkt_type = PACKET_HOST;
 	skb_put(cap_skb, datalen);
@@ -1023,7 +1026,7 @@ static int fill_packet()
 //============================================================================== cs218 needs review!
 
     w = (u_short *)icmph;
-    len = iph->tot_len - sizeof(struct iphdr);
+    len = icmp_len;
     sum = 0;
     nleft = len;
     answer = 0;
