@@ -691,13 +691,16 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
 
         if (pksize > 0 && pksize == cap_size && id == cap_id) 
         {
+        	printk(KERN_ERR "CapProbe packet received by processCapprobe\n");
             for (j = 0; j < MAX_BURST_SIZE; j++) 
             {
+            	printk(KERN_ERR "CapProbe packet serial number: temp value: %u, serial 1st: %u, serial 2nd: %u", tmpvar, cap_serialnum[j], cap_serialnum[j] + 1);
                 if (tmpvar == cap_serialnum[j])			// 1st packet of the packet pair found
                 { 
                 	//store receive time for this packet in the array
                     cap_recv1_sec[j] = tv.tv_sec;
                     cap_recv1_usec[j] = tv.tv_usec;
+                    printk(KERN_ERR "CapProbe first packet received\n");
                     break;
                 } 
                 else if (tmpvar == cap_serialnum[j]+1) 	// 2nd packet of the packet pair found
@@ -705,7 +708,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                 	//store receive time for this packet in the array
                     cap_recv2_sec[j] = tv.tv_sec;
                     cap_recv2_usec[j] = tv.tv_usec;
-
+                    printk(KERN_ERR "CapProbe second packet received\n");
                     if (cap_recv1_sec[j]>0 && cap_recv1_usec[j]>0) 
                     {
                     	//remove SEC_TO_USEC
@@ -747,25 +750,32 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                             	cap_RTT2 = rtt2;
 
                             cap_recv_num++;
+                            printk(KERN_ERR "Getting minimum delay value RTT1: %u, RTT2: %u, cap_receive number: %u", cap_RTT1, cap_RTT2, cap_recv_num);
                             //cs218 large printk section removed, verify if needed later
                         } 
                         else 
                         {
                             // disp = 0, ignore it!!
+                            printk(KERN_ERR "disp = 0");
                         }
                     } 
                     else 
                     {
                         // disorder, ignore it!
+                        printk(KERN_ERR "Packet pair sent in disorder, ignore it");
                     }
                     break;
                 } 
                 else 
+                {
+                	printk(KERN_ERR "serialnum not matched\n");
                 	continue;
+                }
             }
 
             if (cap_C_same2 >= CAP_SAME_MAX || (cap_recv_num >= CAP_SAMPLES && j < MAX_BURST_SIZE && cap_C_same >= CAP_SAME) ) 
             {
+            	printk(KERN_ERR "further calculate difference of RTT\n");
                 long diff_cap_RTT_SUM = cap_RTT_SUM - cap_RTT1 - cap_RTT2;
                 diff_cap_RTT_SUM *= 1000;			//to maintain precision
                 diff_cap_RTT_SUM /= cap_RTT_SUM;
@@ -777,6 +787,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                     long diff_c, avg_c;
 
                     //cs218 large printk section removed, verify if needed later
+                    printk(KERN_ERR "Algorithm converged check\n");
 
                     do_gettimeofday(&cap_time_end);
                     
@@ -811,9 +822,11 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                         cap_C_results[0] = cap_C;
                         cap_phase = CAP_PHASE_2;
                         cap_size = CAP_INIT_SIZE_2;
+                        printk(KERN_ERR "CapProbe phase 1");
                     } 
                     else if (cap_phase == CAP_PHASE_2) 
                     {
+                    	printk(KERN_ERR "CapProbe phase 2");
                         cap_C_results[1] = cap_C;
                         diff_c = (cap_C_results[0] - cap_C_results[1])/2;
                         avg_c = (cap_C_results[0] + cap_C_results[1])/2;
@@ -870,6 +883,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                     else if (cap_phase==CAP_PHASE_3) 
                     {
                     	//cs218 	add if needed, no plans for now
+                    	printk(KERN_ERR "CapProbe phase 3");
                     } 
                     else 
                     {
@@ -899,6 +913,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                 {
                     if (cap_recv_num<CAP_SAMPLES_MAX) 
                     {
+                    	printk(KERN_ERR "CapProbe serial num < sample MAX");
                         if (cap_phase==CAP_PHASE_1) 
                         {
                         	cap_size = CAP_INIT_SIZE_1;
@@ -938,6 +953,10 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                         }
                     }
                 }
+            }
+            else
+            {
+            	printk(KERN_ERR "CapProbe not converged!\n");
             }
         }
     }
@@ -985,12 +1004,12 @@ static int fill_packet()
 
     //ethernet device address info captured and added to cap_skb		cs218: do we need to modify it to wireless interface?
     memcpy(eth+6, (const void *)cap_dev->dev_addr, 6);
-    eth[0] = 0x08;
-    eth[1] = 0x95;
-    eth[2] = 0x2A;
-    eth[3] = 0x6E;
-    eth[4] = 0x18;
-    eth[5] = 0xB6;
+    eth[0] = 0xC0;
+    eth[1] = 0x18;
+    eth[2] = 0x85;
+    eth[3] = 0xBA;
+    eth[4] = 0x3D;
+    eth[5] = 0x81;
     eth[12] = 0x08;
     eth[13] = 0x00;
 
