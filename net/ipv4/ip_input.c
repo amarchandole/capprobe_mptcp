@@ -768,7 +768,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                 } 
                 else 
                 {
-                	printk(KERN_ERR "serialnum not matched\n");
+                	//printk(KERN_ERR "serialnum not matched\n");
                 	continue;
                 }
             }
@@ -1004,12 +1004,18 @@ static int fill_packet()
 
     //ethernet device address info captured and added to cap_skb		cs218: do we need to modify it to wireless interface?
     memcpy(eth+6, (const void *)cap_dev->dev_addr, 6);
-    eth[0] = 0xC0;
-    eth[1] = 0x18;
-    eth[2] = 0x85;
-    eth[3] = 0xBA;
-    eth[4] = 0x3D;
-    eth[5] = 0x81;
+    // eth[0] = 0x5C;
+    // eth[1] = 0xF9;
+    // eth[2] = 0xDD;
+    // eth[3] = 0x48;
+    // eth[4] = 0x54;
+    // eth[5] = 0xDF;
+    eth[0] = 0x08;
+    eth[1] = 0x95;
+    eth[2] = 0x2A;
+    eth[3] = 0x6E;
+    eth[4] = 0x18;
+    eth[5] = 0xB6;
     eth[12] = 0x08;
     eth[13] = 0x00;
 
