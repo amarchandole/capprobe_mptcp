@@ -641,8 +641,33 @@ void capprobe_main(unsigned long packet_pairs_sent)
         //spin_unlock_bh(&cap_dev->tx_global_lock);
     }
 
+    if (cap_recv_num<5) 
+    {
+		if (cap_RTT2>=TOO_LARGE_DELAY)
+		{
+        		mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
+		}
+		else
+		{
+			if (rtt2 < 5 * cap_RTT2)
+			{
+        			mod_timer(&tl, jiffies + msecs_to_jiffies(((rtt2 * 10/8) / SEC_TO_USEC) * 1000));
+			}
+			else
+			{
+        			mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
+			}
+		}
+	} 
+	else 
+	{
+		long send_rate = cap_C / 20; // Mbps; 5% of capacity
+		long pp_interval = SEC_TO_USEC * cap_size * 8 / send_rate; //
+        mod_timer(&tl, jiffies + msecs_to_jiffies(pp_interval / 1000));
+
+	}
     //modify the timer_list expiry time with a new time that is current time + burst_interval
-    mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
+    //mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
     //increment packet_pairs_sent by 1 and update the timer_list data
 	tl.data = (unsigned long) packet_pairs_sent+1;
 	return;
@@ -1004,18 +1029,32 @@ static int fill_packet()
 
     //ethernet device address info captured and added to cap_skb		cs218: do we need to modify it to wireless interface?
     memcpy(eth+6, (const void *)cap_dev->dev_addr, 6);
+
+    // Amar MAC
     // eth[0] = 0x5C;
     // eth[1] = 0xF9;
     // eth[2] = 0xDD;
     // eth[3] = 0x48;
     // eth[4] = 0x54;
     // eth[5] = 0xDF;
-    eth[0] = 0x08;
-    eth[1] = 0x95;
-    eth[2] = 0x2A;
-    eth[3] = 0x6E;
-    eth[4] = 0x18;
-    eth[5] = 0xB6;
+
+    // my home router
+    // eth[0] = 0x08;
+    // eth[1] = 0x95;
+    // eth[2] = 0x2A;
+    // eth[3] = 0x6E;
+    // eth[4] = 0x18;
+    // eth[5] = 0xB6;
+    // eth[12] = 0x08;
+    // eth[13] = 0x00;
+
+    // Other device MAC
+    eth[0] = 0x28;
+    eth[1] = 0xD2;
+    eth[2] = 0x44;
+    eth[3] = 0x2B;
+    eth[4] = 0x77;
+    eth[5] = 0x55;
     eth[12] = 0x08;
     eth[13] = 0x00;
 
