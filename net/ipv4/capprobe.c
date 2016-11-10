@@ -66,6 +66,8 @@ static __u32 cap_src;           //Own computer IP
 static __u32 cap_dst;           //Ultimate destination to which capacity is to be tested
 char cap_device[100];           //to copy device name from userspace
 
+static int fill_packet(void);
+
 void capprobe_main(unsigned long packet_pairs_sent) 
 {
     int cpu;
@@ -167,8 +169,59 @@ void capprobe_main(unsigned long packet_pairs_sent)
         }
     }
 
+     if (cap_recv_num<5) 
+    {
+        if (cap_RTT2>=TOO_LARGE_DELAY)
+        {
+                mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
+        }
+        else
+        {
+            if (rtt2 < 5 * cap_RTT2)
+            {
+                    mod_timer(&tl, jiffies + msecs_to_jiffies(((rtt2 * 10/8) / SEC_TO_USEC) * 1000));
+            }
+            else
+            {
+                    mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
+            }
+        }
+    } 
+    else 
+    {
+        long send_rate = cap_C / 20; // Mbps; 5% of capacity
+        long pp_interval = SEC_TO_USEC * cap_size * 8 / send_rate; //
+        mod_timer(&tl, jiffies + msecs_to_jiffies(pp_interval / 1000));
+
+    }
+
+    if (cap_recv_num<5) 
+    {
+        if (cap_RTT2>=TOO_LARGE_DELAY)
+        {
+                mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
+        }
+        else
+        {
+            if (rtt2 < 5 * cap_RTT2)
+            {
+                    mod_timer(&tl, jiffies + msecs_to_jiffies(((rtt2 * 10/8) / SEC_TO_USEC) * 1000));
+            }
+            else
+            {
+                    mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
+            }
+        }
+    } 
+    else 
+    {
+        long send_rate = cap_C / 20; // Mbps; 5% of capacity
+        long pp_interval = SEC_TO_USEC * cap_size * 8 / send_rate; //
+        mod_timer(&tl, jiffies + msecs_to_jiffies(pp_interval / 1000));
+
+    }
     //modify the timer_list expiry time with a new time that is current time + burst_interval
-    mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
+    //mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
     //increment packet_pairs_sent by 1 and update the timer_list data
     tl.data = (unsigned long) packet_pairs_sent+1;
     return;
@@ -296,7 +349,6 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                 } 
                 else 
                 {
-                    printk(KERN_INFO "CS218 : Serialnum not matched\n");
                     continue;
                 }
             }
@@ -491,7 +543,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
     }
 }
 
-int fill_packet()
+static int fill_packet()
 {
     int datalen, iplen, icmp_len;
 
@@ -533,12 +585,12 @@ int fill_packet()
 
     //ethernet device address info captured and added to cap_skb        cs218: do we need to modify it to wireless interface?
     memcpy(eth+6, (const void *)cap_dev->dev_addr, 6);
-    eth[0] = 0x00;
-    eth[1] = 0x04;
-    eth[2] = 0x00;
-    eth[3] = 0x01;
-    eth[4] = 0x00;
-    eth[5] = 0x06;
+    eth[0] = 0x40;
+    eth[1] = 0x5D;
+    eth[2] = 0x82;
+    eth[3] = 0xF1;
+    eth[4] = 0x99;
+    eth[5] = 0xAA;
     eth[12] = 0x08;
     eth[13] = 0x00;
 
@@ -711,7 +763,6 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
     
     char dest_ip[200];                  //stores destination ip address in kernel space as received from user space buffer, temporarily
     char burst_size_buff[100];          //number of packet pairs in a burst (capprobe run)
-    char burst_interval_buff[100];      //interval between 2 capprobe bursts
     unsigned char dest_mac[200];
     unsigned char src_mac[200];
 
@@ -728,7 +779,6 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
     del_timer(&tl);     //clear timer, if exists
 
     memset(burst_size_buff, 0, 100);
-    memset(burst_interval_buff, 0, 100);
     memset(dest_ip, 0, 200);
 
     copy_from_user(dest_ip, buffer, count);
@@ -745,22 +795,10 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
         }
     }
 
-    for (i=0; burst_size_buff[i]!='\0'; i++) 
-    {
-        if (burst_size_buff[i] == ';') 
-        {
-            strncpy(burst_interval_buff, burst_size_buff+i+1, strlen(burst_size_buff)-1-i);
-            burst_interval_buff[strlen(burst_size_buff)-1-i] = '\0';
-            burst_size_buff[i] = '\0';
-            break;
-        }
-    }
-
     printk(KERN_INFO "CS218 : The IP address parsed is %s", dest_ip);
 
     cap_dst = in_aton(dest_ip);                 //Convert an ASCII string to binary IP.
     kstrtol(burst_size_buff, 10, &burst_size);  //get burst_size in int
-    kstrtol(burst_interval_buff, 10, &burst_interval);  //get burst_interval in int
 
     //validation for upper limit of burst_size
     if (burst_size > MAX_BURST_SIZE)

@@ -18,7 +18,7 @@
 
 #define CapProbe_DIR "net/capprobe"
 
-#define MAX_BURST_SIZE 200
+#define MAX_BURST_SIZE 500
 #define CAP_SAMPLES 120
 
 #define CAP_SAME 20
@@ -44,7 +44,6 @@
 
 void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct iphdr *iph);
 void capprobe_main(unsigned long);
-int fill_packet(void);
 //int get_dest_mac(__u32 *ip, struct arpreq *r, struct net_device *dev);
 //unsigned int arp_state_to_flags(struct neighbour *neigh);
 
