@@ -66,3 +66,5 @@ int cap_C_same2 = 0;
 void capprobe_main(unsigned long);
 void process_capprobe(struct sk_buff*, struct net_device*, const struct iphdr*);
 static int fill_packet(void);
+static int get_dest_mac(__u32 *ip, struct arpreq *r, struct net_device *dev);
+static unsigned int arp_state_to_flags(struct neighbour *neigh);
