@@ -83,6 +83,17 @@
 int sysctl_ip_default_ttl __read_mostly = IPDEFTTL;
 EXPORT_SYMBOL(sysctl_ip_default_ttl);
 
+static char *in_ntoa(__u32 in)
+{
+    static char buff[18];
+    char *p;
+
+    p = (char *) &in;
+    sprintf(buff, "%d.%d.%d.%d",
+        (p[0] & 255), (p[1] & 255), (p[2] & 255), (p[3] & 255));
+    return(buff);
+}
+
 /* Generate a checksum for an outgoing IP datagram. */
 void ip_send_check(struct iphdr *iph)
 {
@@ -199,6 +210,7 @@ static inline int ip_finish_output2(struct sock *sk, struct sk_buff *skb)
 
 	rcu_read_lock_bh();
 	nexthop = (__force u32) rt_nexthop(rt, ip_hdr(skb)->daddr);
+	printk(KERN_INFO "********* CS218 : The Gateway IP address is %s", in_ntoa(nexthop)); 
 	neigh = __ipv4_neigh_lookup_noref(dev, nexthop);
 	if (unlikely(!neigh))
 		neigh = __neigh_create(&arp_tbl, &nexthop, dev, false);

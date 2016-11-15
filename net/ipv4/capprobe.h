@@ -9,6 +9,7 @@
 #include <net/ip.h>
 #include <net/arp.h>
 #include <net/icmp.h>
+#include <net/ipconfig.h>
 #include <linux/inet.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>

@@ -8,9 +8,11 @@
  */
 
 #include <linux/init.h>
+#include <net/ipconfig.h>
 #include <linux/module.h>
 #include <linux/proc_fs.h>
 #include <net/net_namespace.h>
+#include <net/route.h>
 #include <linux/kernel.h>
 #include "capprobe.h"
 
@@ -64,7 +66,12 @@ long cap_C_min = INFINITE;
 //CapProbe src,dest mac & ip related variables
 static __u32 cap_src;           //Own computer IP
 static __u32 cap_dst;           //Ultimate destination to which capacity is to be tested
+static __u32 gateway_ip;        //Gateway IP, initialised only if needed
+static __u32 error_ip;
 char cap_device[100];           //to copy device name from userspace
+unsigned char src_mac[200];
+unsigned char dest_mac[200];
+unsigned char gateway_mac[200];
 
 static int fill_packet(void);
 
@@ -169,21 +176,21 @@ void capprobe_main(unsigned long packet_pairs_sent)
         }
     }
 
-     if (cap_recv_num<5) 
+    if (cap_recv_num<5) 
     {
         if (cap_RTT2>=TOO_LARGE_DELAY)
         {
-                mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
+            mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
         }
         else
         {
             if (rtt2 < 5 * cap_RTT2)
             {
-                    mod_timer(&tl, jiffies + msecs_to_jiffies(((rtt2 * 10/8) / SEC_TO_USEC) * 1000));
+                mod_timer(&tl, jiffies + msecs_to_jiffies(((rtt2 * 10/8) / SEC_TO_USEC) * 1000));
             }
             else
             {
-                    mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
+                mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
             }
         }
     } 
@@ -199,17 +206,17 @@ void capprobe_main(unsigned long packet_pairs_sent)
     {
         if (cap_RTT2>=TOO_LARGE_DELAY)
         {
-                mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
+            mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
         }
         else
         {
             if (rtt2 < 5 * cap_RTT2)
             {
-                    mod_timer(&tl, jiffies + msecs_to_jiffies(((rtt2 * 10/8) / SEC_TO_USEC) * 1000));
+                mod_timer(&tl, jiffies + msecs_to_jiffies(((rtt2 * 10/8) / SEC_TO_USEC) * 1000));
             }
             else
             {
-                    mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
+                mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
             }
         }
     } 
@@ -551,7 +558,6 @@ static int fill_packet()
     struct iphdr *iph;
     struct icmphdr *icmph;
 
-
     u_short *w;
     int len ;
     int sum ;
@@ -585,21 +591,22 @@ static int fill_packet()
 
     //ethernet device address info captured and added to cap_skb        cs218: do we need to modify it to wireless interface?
     memcpy(eth+6, (const void *)cap_dev->dev_addr, 6);
-    eth[0] = 0x40;
-    eth[1] = 0x5D;
-    eth[2] = 0x82;
-    eth[3] = 0xF1;
-    eth[4] = 0x99;
-    eth[5] = 0xAA;
+
+    eth[0] = 0x00;
+    eth[1] = 0x00;
+    eth[2] = 0x00;
+    eth[3] = 0x00;
+    eth[4] = 0x00;
+    eth[5] = 0x00;
     eth[12] = 0x08;
     eth[13] = 0x00;
 
-    datalen = cap_size - 14 - 20 - 8; /* Eth + IPh + ICMPh*/
+    datalen = cap_size - 14 - 20 - 8;                       /* Eth + IPh + ICMPh*/
     iph->ihl = 5;
     iph->version = 4;
     iph->ttl = 64;
     iph->tos = 0;
-    iph->protocol = IPPROTO_ICMP; /* ICMP */
+    iph->protocol = IPPROTO_ICMP;                           /* ICMP */
     iph->saddr = cap_src;
     iph->daddr = cap_dst;
     iph->frag_off = 0x0040;
@@ -685,7 +692,7 @@ static int write_proc_capprobe_if(struct file* file, const char* buffer, unsigne
     return k;
 }
 
-char *in_ntoa(__u32 in)
+static char *in_ntoa(__u32 in)
 {
     static char buff[18];
     char *p;
@@ -755,16 +762,45 @@ static int get_dest_mac(__u32 *ip, struct arpreq *r, struct net_device *dev)
     return err;
 }
 
+static int get_gateway_mac(struct arpreq *r, struct net_device *dev)
+{
+    //net->proc_net.read; 
+    //rt = skb_rtable(skb);
+    struct net *net = dev_net(dev);
+    struct neighbour *neigh;
+    int err = -ENXIO;
+
+    struct rtable *rt = ip_route_output(net, error_ip, cap_src, 0, 0);
+    gateway_ip = rt->rt_gateway;
+    printk(KERN_INFO "CS218 : The Gateway IP address is %s", in_ntoa(gateway_ip));
+
+    neigh = neigh_lookup(&arp_tbl, &gateway_ip, dev);
+    if (neigh) 
+    {
+        if (!(neigh->nud_state & NUD_NOARP)) 
+        {
+            read_lock_bh(&neigh->lock);
+            memcpy(r->arp_ha.sa_data, neigh->ha, dev->addr_len);
+            r->arp_flags = arp_state_to_flags(neigh);
+            read_unlock_bh(&neigh->lock);
+            r->arp_ha.sa_family = dev->type;
+            strlcpy(r->arp_dev, dev->name, sizeof(r->arp_dev));
+            err = 0;
+        }
+        neigh_release(neigh);
+    }
+    return err;
+}
+
 static int write_proc_capprobe(struct file* file, const char* buffer, unsigned long count, void* data)
 {
     int i;
-    struct arpreq r;
+    struct arpreq gw_mac_req, dest_mac_req;
     int start_capprobe_after = 500;     //start capprobe after this time period (in ms)
-    
     char dest_ip[200];                  //stores destination ip address in kernel space as received from user space buffer, temporarily
     char burst_size_buff[100];          //number of packet pairs in a burst (capprobe run)
-    unsigned char dest_mac[200];
-    unsigned char src_mac[200];
+    char error_mac[8];       //00:00:00:00:00:00
+    char error_ip_char[10] = "0.0.0.0";       //0.0.0.0
 
     initialise_capprobe_variables(101);
 
@@ -778,14 +814,17 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
     //get the destination machine's ip address and burst size from the buffer and store it as cap_dst
     del_timer(&tl);     //clear timer, if exists
 
+    //Getting destination IP, burst size from /proc/probe_info
     memset(burst_size_buff, 0, 100);
     memset(dest_ip, 0, 200);
-
+    memset(src_mac, 0, 8);
+    memset(dest_mac, 0, 8);
+    memset(gateway_mac, 0, 8);
+    memset(error_mac, 0, 8);
     copy_from_user(dest_ip, buffer, count);
     dest_ip[count-1] = '\0';
 
-    //calculate burst size and seperate it from destination ip
-    for (i=0; dest_ip[i]!='\0'; i++) 
+    for (i=0; dest_ip[i]!='\0'; i++)            //calculate burst size and separate it from destination ip
     {
         if (dest_ip[i] == ';') 
         {
@@ -794,24 +833,21 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
             dest_ip[i] = '\0';
         }
     }
-
     printk(KERN_INFO "CS218 : The IP address parsed is %s", dest_ip);
-
     cap_dst = in_aton(dest_ip);                 //Convert an ASCII string to binary IP.
+    error_ip = in_aton(error_ip_char);
     kstrtol(burst_size_buff, 10, &burst_size);  //get burst_size in int
 
-    //validation for upper limit of burst_size
+    //validation for upper limit of burst_size, ip address received from user space
     if (burst_size > MAX_BURST_SIZE)
         burst_size = MAX_BURST_SIZE;
-
-    if (cap_dst==0) {           
-        return count;           //error condition, no ip address received from user space
-    }
+    if (cap_dst==0)           
+        return count;
 
     //get a pointer to the device by its name (here, eth0)
     rtnl_lock();
-    cap_dev = __dev_get_by_name(&init_net, cap_device);         
-    dev_hold(cap_dev);
+        cap_dev = __dev_get_by_name(&init_net, cap_device);         
+        dev_hold(cap_dev);
     rtnl_unlock();
 
     //get the host machine's ip address from the device and store it as cap_src
@@ -820,20 +856,21 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
         struct in_device *in_dev = cap_dev->ip_ptr;
         cap_src = in_dev->ifa_list->ifa_address;
     }
+    printk(KERN_INFO "Source IP addres = %pI4\n", &cap_src);
+    
+    get_gateway_mac(&gw_mac_req, cap_dev);
+    memcpy(gateway_mac, (const void *)gw_mac_req.arp_ha.sa_data, 6);
+    printk(KERN_INFO "CS218 : MAC Addr for Gateway: %02X:%02X:%02X:%02X:%02X:%02X\n", gateway_mac[0], gateway_mac[1], gateway_mac[2], gateway_mac[3], gateway_mac[4], gateway_mac[5]);
 
-    //need to get dest_mac here 
-
-    /*void arp_send(int type, int ptype, __be32 dest_ip,
-            struct net_device *dev, __be32 src_ip,
-            const unsigned char *dest_hw, const unsigned char *src_hw,
-            const unsigned char *target_hw)*/
     memcpy(src_mac, (const void *)cap_dev->dev_addr, 6);
-
     arp_send(1, 0x0800, cap_dst, cap_dev, cap_src, NULL, src_mac, NULL);
 
-    //__u32 *ip, struct arpreq *r, struct net_device *dev
-    get_dest_mac(&cap_dst, &r, cap_dev);
-    memcpy(dest_mac, (const void *)r.arp_ha.sa_data, 6);
+    get_dest_mac(&cap_dst, &dest_mac_req, cap_dev);
+    memcpy(dest_mac, (const void *)dest_mac_req.arp_ha.sa_data, 6);
+    if (!memcmp((const void *)error_mac, (const void *)dest_mac, 6))
+    {
+        memcpy(dest_mac, gateway_mac, 6);
+    }
 
     printk(KERN_INFO "CS218 : MAC Addr for %s: %02X:%02X:%02X:%02X:%02X:%02X\n", dest_ip, dest_mac[0], dest_mac[1], dest_mac[2], dest_mac[3], dest_mac[4], dest_mac[5]);
     printk(KERN_INFO "\n\nCS218 : Start CapProbe to %s\n",dest_ip);
