@@ -22,6 +22,7 @@
 #include <linux/unistd.h>
 #include <linux/fcntl.h>
 #include <linux/fs.h>
+#include <asm/uaccess.h>
 
 static struct proc_dir_entry *proc_capprobe;
 static struct proc_dir_entry *proc_capprobe_if;
@@ -30,6 +31,7 @@ static struct proc_dir_entry *proc_capprobe_if;
 static __u32 cap_src;           //Own computer IP
 
 static capprobe_param cap_paramp[MAX_NUM_PATH];
+int max_interface = MAX_NUM_PATH;
 
 static int fill_packet(int num_path);
 
@@ -638,14 +640,36 @@ static int read_proc_capprobe_if(char *buf, char **start, off_t offset, int coun
 static int write_proc_capprobe_if(struct file* file, const char* buffer, unsigned long count, void* data)
 {
     int k = count;
-    char buf[1000];
 
     //MOD_INC_USE_COUNT;
     char cap_device[100];
 
-    memset(buf,0,1000);
+    memset(cap_device,0,100);
     copy_from_user(cap_device, buffer, count);
     cap_device[count-1] = '\0';
+
+    int i;
+    int j;
+    int num_path;
+    num_path = 0;
+    j = 0;
+    for (i = 0; cap_device[i] != '\0'; i ++)
+    {
+        
+        if (cap_device[i] == ';')
+        {
+            cap_paramp[num_path].cap_device[j] = '\0';
+            j = 0;
+            num_path ++;
+            continue;
+        }
+        cap_paramp[num_path].cap_device[j] = cap_device[i];
+        j ++;
+    }
+
+    max_interface = num_path;
+
+
 
     ////MOD_DEC_USE_COUNT;
     return k;
@@ -675,7 +699,7 @@ static void initialise_capprobe_variables(int id)
 
     int num_path;
 
-    for (num_path = 0; num_path < MAX_NUM_PATH; num_path ++)
+    for (num_path = 0; num_path < max_interface; num_path ++)
     {
         cap_paramp[num_path].CAP_INIT_SIZE_1 = INIT_SIZE_1;
         cap_paramp[num_path].CAP_INIT_SIZE_2 = INIT_SIZE_2;
@@ -742,12 +766,71 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
     unsigned char src_mac[200];
 
     initialise_capprobe_variables(101);
-    strncpy(cap_paramp[0].cap_device, "eth0", 4);
-    strncpy(cap_paramp[1].cap_device, "eth0", 4);
+    // strncpy(cap_paramp[0].cap_device, "eth0", 4);
+    // strncpy(cap_paramp[1].cap_device, "eth0", 4);
+
+
+    // CS218: reading from proc/net/route file -----------------------------------------------------
+
+    struct file *f;
+    char buf[1024];
+    struct in_addr addr;
+    mm_segment_t fs;
+
+    memset(buf, 0, 1024);
+
+    f = filp_open("/proc/net/route", O_RDONLY, 0);
+    if(f == NULL)
+        printk(KERN_ALERT "filp_open error!!.\n");
+    else{
+        // Get current segment descriptor
+        fs = get_fs();
+        // Set segment descriptor associated to kernel space
+        set_fs(get_ds());
+        // Read the file
+        f->f_op->read(f, buf, 1024, &f->f_pos);
+        set_fs(fs);
+        // See what we read from file
+        printk(KERN_INFO "buf:%s\n",buf);
+    }
+    filp_close(f,NULL);
+
+    // CS218: reading from proc/net/route file ------------------------------------------------------
+
+    copy_from_user(dest_ip, buffer, count);
+    dest_ip[count-1] = '\0';
+
+    int j;
+    num_path = 0;
+    j = 0;
+    char temp_ip[50];
+    memset(temp_ip, 0, 50);
+
+    for (i = 0; dest_ip[i] != '\0'; i ++)
+    {
+        
+        if (dest_ip[i] == ';')
+        {
+            temp_ip[j] = '\0';
+            cap_paramp[num_path].cap_dst = in_aton(temp_ip);
+            num_path ++;
+            printk(KERN_INFO "CS218 : The IP address parsed for interface: %u is %s\n", num_path, temp_ip);
+            memset(temp_ip, 0, 50);
+            j = 0;
+            continue;
+        }
+        temp_ip[j] = dest_ip[i];
+        j ++;
+    }
+    
+    if (num_path != max_interface)
+    {
+        printk(KERN_INFO "Number of interfaces and IP destination doesn't match. Use valid input\n");
+    }
 
     //initialising arrays that will store capprobee send timings
 
-    for (num_path = 0; num_path < MAX_NUM_PATH; num_path ++)
+    for (num_path = 0; num_path < max_interface; num_path ++)
     {
         for (i=0; i<MAX_BURST_SIZE; i++) {
             cap_paramp[num_path].cap_serialnum[i] = -1;
@@ -757,35 +840,11 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
 
         del_timer(&(cap_paramp[num_path].tl));
 
-        //get the destination machine's ip address and burst size from the buffer and store it as cap_dst
-        memset(dest_ip, 0, 200);
-
-        copy_from_user(dest_ip, buffer, count);
-        dest_ip[count-1] = '\0';
-
-        //calculate burst size and seperate it from destination ip
-        // for (i=0; dest_ip[i]!='\0'; i++) 
-        // {
-        //     if (dest_ip[i] == ';') 
-        //     {
-        //         dest_ip[i] = '\0';
-        //     }
-        // }
-
-        printk(KERN_INFO "CS218 : The IP address parsed is %s", dest_ip);
-
-        cap_paramp[num_path].cap_dst = in_aton(dest_ip);                 //Convert an ASCII string to binary IP.
-        //kstrtol(burst_size_buff, 10, &burst_size);  //get burst_size in int
-
-        //validation for upper limit of burst_size
-        // if (burst_size > MAX_BURST_SIZE)
-        //     burst_size = MAX_BURST_SIZE;
-
-        if (cap_paramp[num_path].cap_dst==0) {           
+        if (cap_paramp[num_path].cap_dst==0) 
+        {
+            printk(KERN_INFO "No IP address input for interface: %u\n", num_path + 1);           
             return count;           //error condition, no ip address received from user space
         }
-
-        printk(KERN_INFO "CS218 : The IP address parsed is %s", dest_ip);
 
         //get a pointer to the device by its name (here, eth0)
 
@@ -816,7 +875,7 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
         //memcpy(dest_mac, (const void *)r.arp_ha.sa_data, 6);
 
         //printk(KERN_INFO "CS218 : MAC Addr for %s: %02X:%02X:%02X:%02X:%02X:%02X\n", dest_ip, dest_mac[0], dest_mac[1], dest_mac[2], dest_mac[3], dest_mac[4], dest_mac[5]);
-        printk(KERN_INFO "\n\nCS218 : path %u, Start CapProbe to %s\n", num_path, dest_ip);
+        printk(KERN_INFO "\n\nCS218 : Start CapProbe on path %u\n", num_path + 1);
 
         //set the first timer tl, this is when CapProbe main is triggered the first time
         setup_timer(&(cap_paramp[num_path].tl), capprobe_main, num_path);                   //initialize timer to trigger capprobe_main
