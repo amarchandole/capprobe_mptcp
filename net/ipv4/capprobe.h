@@ -88,7 +88,7 @@ __u32 cap_dst;           //Ultimate destination to which capacity is to be teste
 char cap_device[100];           //to copy device name from userspace
 unsigned char dest_mac[200];    
 unsigned char gateway_mac[200];
-
+__u32 cap_src;
 __u32 ifa_gateway;
 __u32 ifa_mask;
 

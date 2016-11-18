@@ -30,7 +30,6 @@ static struct proc_dir_entry *proc_capprobe;
 static struct proc_dir_entry *proc_capprobe_if;
 
 //CapProbe src,dest mac & ip related variables
-static __u32 cap_src;           //Own computer IP
 static __u32 error_ip;
 spinlock_t capprobe_spinlock;
 
@@ -633,7 +632,7 @@ static int fill_packet(int num_path)
     iph->ttl = 64;
     iph->tos = 0;
     iph->protocol = IPPROTO_ICMP; /* ICMP */
-    iph->saddr = cap_src;
+    iph->saddr = cap_paramp[num_path].cap_src;
     iph->daddr = cap_paramp[num_path].cap_dst;
     iph->frag_off = 0x0040;
     iplen = 20 + 8 + datalen;
@@ -742,6 +741,11 @@ static int write_proc_capprobe_if(struct file* file, const char* buffer, unsigne
         j ++;
     }
 
+    for (i = 0; i < num_path; i ++)
+    {
+        printk(KERN_INFO "CS218 : The interface for path %u is %s\n", i, cap_paramp[i].cap_device);
+    }
+
     max_interface = num_path;
 
     ////MOD_DEC_USE_COUNT;
@@ -829,7 +833,7 @@ static int get_dest_mac(__u32 *ip, struct arpreq *r, struct net_device *dev)
 
 static int is_same_subnet(int num_path,__u32 dest_ip)
 {
-    if((cap_src & cap_paramp[num_path].ifa_mask) == (dest_ip & cap_paramp[num_path].ifa_mask))
+    if((cap_paramp[num_path].cap_src & cap_paramp[num_path].ifa_mask) == (dest_ip & cap_paramp[num_path].ifa_mask))
         return 1;
     else
         return 0;
@@ -970,7 +974,7 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
         //cap_src = 0;
         if (cap_paramp[num_path].cap_dev->ip_ptr) {
             struct in_device *in_dev = cap_paramp[num_path].cap_dev->ip_ptr;
-            cap_src = in_dev->ifa_list->ifa_address;
+            cap_paramp[num_path].cap_src = in_dev->ifa_list->ifa_address;
         }
         else
         {
@@ -980,10 +984,10 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
         //need to get dest_mac here 
 
         //step 0
-        set_gateway_mac(num_path, &(cap_paramp[num_path].ifa_gateway), cap_src);
+        set_gateway_mac(num_path, &(cap_paramp[num_path].ifa_gateway), cap_paramp[num_path].cap_src);
         
         //step 1
-        memcpy(src_mac, (const void *)(cap_paramp[0].cap_dev)->dev_addr, 6);
+        memcpy(src_mac, (const void *)(cap_paramp[num_path].cap_dev)->dev_addr, 6);
 
         //step 2
         if (is_same_subnet(num_path, cap_paramp[num_path].cap_dst))
@@ -992,7 +996,7 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
             for(i=0; i<4; i++)
             {
                 printk(KERN_INFO "\n\nARP request no. %d sent!\n",i+1);
-                arp_send(ARPOP_REQUEST, ETH_P_ARP, cap_paramp[num_path].cap_dst, cap_paramp[num_path].cap_dev, cap_src, NULL, src_mac, NULL);
+                arp_send(ARPOP_REQUEST, ETH_P_ARP, cap_paramp[num_path].cap_dst, cap_paramp[num_path].cap_dev, cap_paramp[num_path].cap_src, NULL, src_mac, NULL);
                 msleep(500);
             }   
 
