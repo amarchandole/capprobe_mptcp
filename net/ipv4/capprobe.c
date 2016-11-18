@@ -23,20 +23,26 @@
 #include <linux/fcntl.h>
 #include <linux/fs.h>
 #include <asm/uaccess.h>
+#include <asm/spinlock.h>
+#include <linux/delay.h>
 
 static struct proc_dir_entry *proc_capprobe;
 static struct proc_dir_entry *proc_capprobe_if;
 
 //CapProbe src,dest mac & ip related variables
 static __u32 cap_src;           //Own computer IP
+static __u32 error_ip;
+spinlock_t capprobe_spinlock;
 
 static capprobe_param cap_paramp[MAX_NUM_PATH];
 int max_interface = MAX_NUM_PATH;
 
 static int fill_packet(int num_path);
 static void logging_results(int num_path, long capacity);
-
-//static int get_gateway_addr(char *iface, struct sockaddr_in *ipv4_gwaddr);
+static unsigned int arp_state_to_flags(struct neighbour *neigh);
+static int get_dest_mac(__u32 *ip, struct arpreq *r, struct net_device *dev);
+static int is_same_subnet(int num_path,__u32 dest_ip);
+static void set_gateway_mac(int num_path, __u32* ifa_gateway, __u32 src_ip);
 
 void capprobe_main(int num_path) 
 {
@@ -47,11 +53,8 @@ void capprobe_main(int num_path)
 
     do_gettimeofday(&tv);
 
-    if (num_path != 0)
-    printk(KERN_INFO "in main function 3. important path id: %u\n", num_path);
-
-    if (cap_paramp[num_path].packet_pairs_sent > MAX_BURST_SIZE) 
-        return;
+    // if (cap_paramp[num_path].packet_pairs_sent > MAX_BURST_SIZE) 
+    //     return;
 
     //get start time for capprobe if this is the first call to capprobe_main()
     if (cap_paramp[num_path].packet_pairs_sent == 1) 
@@ -112,7 +115,6 @@ void capprobe_main(int num_path)
                 if (dev_xmit_complete(ret_val)) 
                 {
                     last_ok = 1;
-                    printk(KERN_INFO "CS218 : Hard transmit success\n");
                     HARD_TX_UNLOCK(cap_paramp[num_path].cap_dev, cap_paramp[num_path].cap_dev->_tx);
                     goto out;
                 }
@@ -245,7 +247,6 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
             if (id == cap_paramp[num_path].cap_id)
             {
                 matched = true;
-                printk(KERN_INFO "1. important path id: %u\n", num_path);
                 break;
             }
         }
@@ -273,7 +274,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                     //store receive time for this packet in the array
                     cap_paramp[num_path].cap_recv1_sec[j] = tv.tv_sec;
                     cap_paramp[num_path].cap_recv1_usec[j] = tv.tv_usec;
-                    printk(KERN_INFO "CS218 : CapProbe first packet received\n");
+                    //printk(KERN_INFO "CS218 : CapProbe first packet received\n");
                     break;
                 } 
                 else if (tmpvar == cap_paramp[num_path].cap_serialnum[j]+1)              //2nd packet of the packet pair found
@@ -281,7 +282,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                     //store receive time for this packet in the array
                     cap_paramp[num_path].cap_recv2_sec[j] = tv.tv_sec;
                     cap_paramp[num_path].cap_recv2_usec[j] = tv.tv_usec;
-                    printk(KERN_INFO "CS218 : CapProbe second packet received\n");
+                    //printk(KERN_INFO "CS218 : CapProbe second packet received\n");
 
                     if (cap_paramp[num_path].cap_recv1_sec[j]>0 && cap_paramp[num_path].cap_recv1_usec[j]>0) 
                     {
@@ -325,7 +326,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                                 cap_paramp[num_path].cap_RTT2 = cap_paramp[num_path].rtt2;
 
                             cap_paramp[num_path].cap_recv_num++;
-                            printk(KERN_INFO "CS218 : Getting minimum delay value RTT1: %ld, RTT2: %ld, cap_receive number: %ld", cap_paramp[num_path].cap_RTT1, cap_paramp[num_path].cap_RTT2, cap_paramp[num_path].cap_recv_num);
+                            //printk(KERN_INFO "CS218 : Getting minimum delay value RTT1: %ld, RTT2: %ld, cap_receive number: %ld", cap_paramp[num_path].cap_RTT1, cap_paramp[num_path].cap_RTT2, cap_paramp[num_path].cap_recv_num);
                             //cs218 large printk section removed, verify if needed later
                         } 
                         else 
@@ -350,7 +351,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
             if (cap_paramp[num_path].cap_C_same2 >= CAP_SAME_MAX || (cap_paramp[num_path].cap_recv_num >= CAP_SAMPLES && j < MAX_BURST_SIZE && cap_paramp[num_path].cap_C_same >= CAP_SAME) ) 
             {
                 long diff_cap_RTT_SUM;
-                printk(KERN_INFO "CS218 : Further calculate difference of RTT\n");
+                //printk(KERN_INFO "CS218 : Further calculate difference of RTT\n");
                 diff_cap_RTT_SUM = cap_paramp[num_path].cap_RTT_SUM - cap_paramp[num_path].cap_RTT1 - cap_paramp[num_path].cap_RTT2;
                 diff_cap_RTT_SUM *= 1000;           //to maintain precision
                 diff_cap_RTT_SUM /= cap_paramp[num_path].cap_RTT_SUM;
@@ -362,7 +363,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                     long diff_c, avg_c;
 
                     //cs218 large printk section removed, verify if needed later
-                    printk(KERN_INFO "CS218 : Algorithm converged check\n");
+                    //printk(KERN_INFO "CS218 : Algorithm converged check\n");
 
                     do_gettimeofday(&(cap_paramp[num_path].cap_time_end));
 
@@ -414,11 +415,11 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                         cap_paramp[num_path].cap_C_results[0] = cap_paramp[num_path].cap_C;
                         cap_paramp[num_path].cap_phase = CAP_PHASE_2;
                         cap_paramp[num_path].cap_size = cap_paramp[num_path].CAP_INIT_SIZE_2;
-                        printk(KERN_INFO "CS218 : CapProbe phase 1");
+                        //printk(KERN_INFO "CS218 : CapProbe phase 1");
                     } 
                     else if (cap_paramp[num_path].cap_phase == CAP_PHASE_2) 
                     {
-                        printk(KERN_INFO "CS218 : CapProbe phase 2");
+                        //printk(KERN_INFO "CS218 : CapProbe phase 2");
                         cap_paramp[num_path].cap_C_results[1] = cap_paramp[num_path].cap_C;
                         diff_c = (cap_paramp[num_path].cap_C_results[0] - cap_paramp[num_path].cap_C_results[1])/2;
                         avg_c = (cap_paramp[num_path].cap_C_results[0] + cap_paramp[num_path].cap_C_results[1])/2;
@@ -525,7 +526,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                 {
                     if (cap_paramp[num_path].cap_recv_num<CAP_SAMPLES_MAX) 
                     {
-                        printk(KERN_INFO "CS218 : CapProbe serial num < sample MAX");
+                        //printk(KERN_INFO "CS218 : CapProbe serial num < sample MAX");
                         if (cap_paramp[num_path].cap_phase==CAP_PHASE_1) 
                         {
                             cap_paramp[num_path].cap_size = cap_paramp[num_path].CAP_INIT_SIZE_1;
@@ -568,7 +569,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
             }
             else
             {
-                printk(KERN_INFO "CS218 : CapProbe not converged!\n");
+                //printk(KERN_INFO "CS218 : CapProbe not converged!\n");
             }
         }
     }
@@ -588,9 +589,6 @@ static int fill_packet(int num_path)
     int sum ;
     int nleft ;
     u_short answer ;
-
-    if (num_path != 0)
-    printk(KERN_INFO "2. important path id: %u\n", num_path);
 
     //if capprobe socket_buffer is not NULL, free it
     if (cap_paramp[num_path].cap_skb) 
@@ -618,13 +616,14 @@ static int fill_packet(int num_path)
     //icmph = (struct icmphdr *)skb_put(cap_skb, sizeof(struct icmphdr));
 
     //ethernet device address info captured and added to cap_skb        cs218: do we need to modify it to wireless interface?
+    memcpy(eth,cap_paramp[num_path].dest_mac, 6);
     memcpy(eth+6, (const void *)(cap_paramp[num_path].cap_dev)->dev_addr, 6);
-    eth[0] = 0x28;
-    eth[1] = 0xD2;
-    eth[2] = 0x44;
-    eth[3] = 0x2B;
-    eth[4] = 0x77;
-    eth[5] = 0x55;
+    // eth[0] = 0x28;
+    // eth[1] = 0xD2;
+    // eth[2] = 0x44;
+    // eth[3] = 0x2B;
+    // eth[4] = 0x77;
+    // eth[5] = 0x55;
     eth[12] = 0x08;
     eth[13] = 0x00;
 
@@ -794,50 +793,79 @@ static void initialise_capprobe_variables(int id)
     }
 }
 
-// static unsigned int arp_state_to_flags(struct neighbour *neigh)
-// {
-//     if (neigh->nud_state&NUD_PERMANENT)
-//         return ATF_PERM | ATF_COM;
-//     else if (neigh->nud_state&NUD_VALID)
-//         return ATF_COM;
-//     else
-//         return 0;
-// }
 
-// static int get_dest_mac(__u32 *ip, struct arpreq *r, struct net_device *dev)
-// {
-//     struct neighbour *neigh;
-//     int err = -ENXIO;
+static unsigned int arp_state_to_flags(struct neighbour *neigh)
+{
+    if (neigh->nud_state&NUD_PERMANENT)
+        return ATF_PERM | ATF_COM;
+    else if (neigh->nud_state&NUD_VALID)
+        return ATF_COM;
+    else
+        return 0;
+}
 
-//     neigh = neigh_lookup(&arp_tbl, ip, dev);
-//     if (neigh) 
-//     {
-//         if (!(neigh->nud_state & NUD_NOARP)) 
-//         {
-//             read_lock_bh(&neigh->lock);
-//             memcpy(r->arp_ha.sa_data, neigh->ha, dev->addr_len);
-//             r->arp_flags = arp_state_to_flags(neigh);
-//             read_unlock_bh(&neigh->lock);
-//             r->arp_ha.sa_family = dev->type;
-//             strlcpy(r->arp_dev, dev->name, sizeof(r->arp_dev));
-//             err = 0;
-//         }
-//         neigh_release(neigh);
-//     }
-//     return err;
-// }
+static int get_dest_mac(__u32 *ip, struct arpreq *r, struct net_device *dev)
+{
+    struct neighbour *neigh;
+    int err = -ENXIO;
+
+    neigh = neigh_lookup(&arp_tbl, ip, dev);
+    if (neigh) 
+    {
+        if (!(neigh->nud_state & NUD_NOARP)) 
+        {
+            read_lock_bh(&neigh->lock);
+            memcpy(r->arp_ha.sa_data, neigh->ha, dev->addr_len);
+            r->arp_flags = arp_state_to_flags(neigh);
+            read_unlock_bh(&neigh->lock);
+            r->arp_ha.sa_family = dev->type;
+            strlcpy(r->arp_dev, dev->name, sizeof(r->arp_dev));
+            err = 0;
+        }
+        neigh_release(neigh);
+    }
+    return err;
+}
+
+static int is_same_subnet(int num_path,__u32 dest_ip)
+{
+    if((cap_src & cap_paramp[num_path].ifa_mask) == (dest_ip & cap_paramp[num_path].ifa_mask))
+        return 1;
+    else
+        return 0;
+}
+
+static void set_gateway_mac(int num_path, __u32* ifa_gateway, __u32 src_ip)
+{
+    int i=0;
+    spin_lock_init(&capprobe_spinlock);
+    spin_lock(&capprobe_spinlock);
+        //access gateway table and use mask to find needed gateway.
+        for(;i<10;i++)
+        {
+            if((all_gateways[i] & cap_paramp[num_path].ifa_mask) == (src_ip & cap_paramp[num_path].ifa_mask))
+                cap_paramp[num_path].ifa_gateway = all_gateways[i];
+                break;
+        }
+    spin_unlock(&capprobe_spinlock);
+    return;
+}
 
 static int write_proc_capprobe(struct file* file, const char* buffer, unsigned long count, void* data)
 {
     int i;
     int num_path;
-    struct arpreq r;
+    struct arpreq gw_mac_req, dest_mac_req;
     int start_capprobe_after = 1000;     //start capprobe after this time period (in ms)
     
     char dest_ip[200];                  //stores destination ip address in kernel space as received from user space buffer, temporarily
     //char burst_size_buff[100];          //number of packet pairs in a burst (capprobe run)
     unsigned char dest_mac[200];
     unsigned char src_mac[200];
+    char error_mac[8];       //00:00:00:00:00:00
+    memset(error_mac, 0, 8);
+    char error_ip_char[10] = "0.0.0.0"; //0.0.0.0
+    error_ip = in_aton(error_ip_char);
 
     initialise_capprobe_variables(101);
     // strncpy(cap_paramp[0].cap_device, "eth0", 4);
@@ -951,15 +979,48 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
 
         //need to get dest_mac here 
 
-        memcpy(src_mac, (const void *)cap_paramp[0].cap_dev->dev_addr, 6);
+        //step 0
+        set_gateway_mac(num_path, &(cap_paramp[num_path].ifa_gateway), cap_src);
+        
+        //step 1
+        memcpy(src_mac, (const void *)(cap_paramp[0].cap_dev)->dev_addr, 6);
 
-        //arp_send(1, 0x0800, cap_dst, cap_dev, cap_src, NULL, src_mac, NULL);
+        //step 2
+        if (is_same_subnet(num_path, cap_paramp[num_path].cap_dst))
+        {
+            //step 2.a
+            for(i=0; i<4; i++)
+            {
+                printk(KERN_INFO "\n\nARP request no. %d sent!\n",i+1);
+                arp_send(ARPOP_REQUEST, ETH_P_ARP, cap_paramp[num_path].cap_dst, cap_paramp[num_path].cap_dev, cap_src, NULL, src_mac, NULL);
+                msleep(500);
+            }   
 
-        //__u32 *ip, struct arpreq *r, struct net_device *dev
-        //get_dest_mac(&cap_dst, &r, cap_dev);
-        //memcpy(dest_mac, (const void *)r.arp_ha.sa_data, 6);
+            //step 2.b
+            get_dest_mac(&(cap_paramp[num_path].cap_dst), &dest_mac_req, cap_paramp[num_path].cap_dev);
+            memcpy(cap_paramp[num_path].dest_mac, (const void *)dest_mac_req.arp_ha.sa_data, 6);
 
-        //printk(KERN_INFO "CS218 : MAC Addr for %s: %02X:%02X:%02X:%02X:%02X:%02X\n", dest_ip, dest_mac[0], dest_mac[1], dest_mac[2], dest_mac[3], dest_mac[4], dest_mac[5]);
+            if (!memcmp((const void *)error_mac, (const void *)(cap_paramp[num_path].dest_mac), 6))    //case 2.b.i
+                printk(KERN_INFO "\n\nCS218 : Error in MAC address resolution to destination, no entry in ARP Cache\n");
+        }
+        //step 3
+        else
+        {
+            printk(KERN_INFO "\n\nCS218 : Destination not found in same subnet. Routing through gateway\n");
+            
+            //step 3.a
+            get_dest_mac(&(cap_paramp[num_path].ifa_gateway), &gw_mac_req, cap_paramp[num_path].cap_dev);
+            memcpy(cap_paramp[num_path].gateway_mac, (const void *)gw_mac_req.arp_ha.sa_data, 6);
+            printk(KERN_INFO "CS218 : MAC Addr for Gateway: %02X:%02X:%02X:%02X:%02X:%02X\n", 
+                cap_paramp[num_path].gateway_mac[0], cap_paramp[num_path].gateway_mac[1], cap_paramp[num_path].gateway_mac[2], cap_paramp[num_path].gateway_mac[3], cap_paramp[num_path].gateway_mac[4], cap_paramp[num_path].gateway_mac[5]);
+            
+            //step 3.b
+            memcpy(cap_paramp[num_path].dest_mac, (const void *)(cap_paramp[num_path].gateway_mac), 6);
+        }
+
+        printk(KERN_INFO "\n\nCS218 : Final destination MAC address set to %02X:%02X:%02X:%02X:%02X:%02X\n", 
+        cap_paramp[num_path].dest_mac[0], cap_paramp[num_path].dest_mac[1], cap_paramp[num_path].dest_mac[2], cap_paramp[num_path].dest_mac[3], cap_paramp[num_path].dest_mac[4], cap_paramp[num_path].dest_mac[5]);
+    
         printk(KERN_INFO "\n\nCS218 : Start CapProbe on path %u\n", num_path + 1);
 
         //set the first timer tl, this is when CapProbe main is triggered the first time

@@ -86,6 +86,11 @@ long cap_C_min;
 
 __u32 cap_dst;           //Ultimate destination to which capacity is to be tested
 char cap_device[100];           //to copy device name from userspace
+unsigned char dest_mac[200];    
+unsigned char gateway_mac[200];
+
+__u32 ifa_gateway;
+__u32 ifa_mask;
 
 unsigned long packet_pairs_sent;
 
@@ -100,5 +105,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
 void capprobe_main(int num_path);
 //int get_dest_mac(__u32 *ip, struct arpreq *r, struct net_device *dev);
 //unsigned int arp_state_to_flags(struct neighbour *neigh);
+
+extern __u32 all_gateways[10];
 
 #endif
