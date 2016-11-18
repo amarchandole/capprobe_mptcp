@@ -34,6 +34,7 @@ static capprobe_param cap_paramp[MAX_NUM_PATH];
 int max_interface = MAX_NUM_PATH;
 
 static int fill_packet(int num_path);
+static void logging_results(int num_path, long capacity);
 
 //static int get_gateway_addr(char *iface, struct sockaddr_in *ipv4_gwaddr);
 
@@ -173,6 +174,36 @@ void capprobe_main(int num_path)
     cap_paramp[num_path].packet_pairs_sent ++;
     cap_paramp[num_path].tl.data = num_path;
     return;
+}
+
+static void logging_results(int num_path, long capacity)
+{
+    struct file *f;
+    char buf[128];
+    struct in_addr addr;
+    mm_segment_t fs;
+
+    memset(buf, 0, 128);
+
+    f = filp_open("/tmp/CapProbe_Log", O_RDWR|O_CREAT|O_APPEND, 0644);
+    if(f == NULL)
+        printk(KERN_ALERT "filp_open error!!.\n");
+    else{
+        // Get current segment descriptor
+        fs = get_fs();
+        // Set segment descriptor associated to kernel space
+        set_fs(KERNEL_DS);
+        // Write to the file
+
+        sprintf(buf, "On Path %u : the capacity for interface %s is %ldbps\n", num_path + 1, cap_paramp[num_path].cap_device, capacity);
+
+        vfs_write(f, buf, sizeof(buf), &f->f_pos);
+        //f->f_op->write(f, (char*)buf, 8, &f->f_pos);
+        set_fs(fs);
+        // See what we read from file
+        printk(KERN_INFO "buf:%s\n",buf);
+    }
+    filp_close(f,NULL);
 }
 
 void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct iphdr *iph)
@@ -355,11 +386,28 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                     cap_paramp[num_path].cap_size = 0;
                     if (cap_paramp[num_path].cap_C_same2 >= CAP_SAME_MAX) 
                     {
-                        del_timer(&(cap_paramp[num_path].tl));
                         cap_paramp[num_path].cap_size = 0;
                         printk(KERN_INFO "CS218 : Stable CapProbe for path: %u Finished! Total time = %ld.%06ld sec C = %ld.%03ld\n", num_path + 1,
                             total_time/1000000, total_time % 1000000,
                             ((long)(cap_paramp[num_path].cap_C*10))/10, (long)(cap_paramp[num_path].cap_C*1000)%1000);
+
+                        logging_results(num_path, cap_paramp[num_path].cap_C);
+
+                        cap_paramp[num_path].CAP_INIT_SIZE_1 = INIT_SIZE_1;
+                        cap_paramp[num_path].CAP_INIT_SIZE_2 = INIT_SIZE_2;
+                        cap_paramp[num_path].cap_size = cap_paramp[num_path].CAP_INIT_SIZE_1;
+                        cap_paramp[num_path].cap_phase = CAP_PHASE_1;
+                        cap_paramp[num_path].cap_icmp_serialnum = 0;
+                        cap_paramp[num_path].cap_RTT_SUM = TOO_LARGE_DELAY;
+                        cap_paramp[num_path].cap_RTT1 = TOO_LARGE_DELAY;
+                        cap_paramp[num_path].cap_RTT2 = TOO_LARGE_DELAY;
+                        cap_paramp[num_path].cap_C_min = TOO_LARGE_DELAY;
+                        cap_paramp[num_path].cap_C_max = 0;
+                        cap_paramp[num_path].cap_C = 0;
+                        cap_paramp[num_path].cap_run = 1;
+                        cap_paramp[num_path].cap_variance = 0;
+                        cap_paramp[num_path].cap_recv_num = 0;
+                        cap_paramp[num_path].packet_pairs_sent = 1;
                     } 
                     else if (cap_paramp[num_path].cap_phase == CAP_PHASE_1) 
                     {
@@ -386,11 +434,31 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
 
                         if (diff_c < 50)            //cs218, check if error, maintaining precision
                         {
-                            del_timer(&(cap_paramp[num_path].tl));
+                            //del_timer(&(cap_paramp[num_path].tl));
                             cap_paramp[num_path].cap_size = 0;
                             printk(KERN_INFO "CS218 : CapProbe Finished! Total time = %ld.%06ld sec C = %ld.%03ld\n",
                                 total_time/1000000, total_time % 1000000,
                                 ((long)(avg_c*10))/10, (long)(avg_c*1000)%1000);
+
+                            logging_results(num_path, cap_paramp[num_path].cap_C);
+
+                            cap_paramp[num_path].CAP_INIT_SIZE_1 = INIT_SIZE_1;
+                            cap_paramp[num_path].CAP_INIT_SIZE_2 = INIT_SIZE_2;
+                            cap_paramp[num_path].cap_size = cap_paramp[num_path].CAP_INIT_SIZE_1;
+                            cap_paramp[num_path].cap_phase = CAP_PHASE_1;
+                            cap_paramp[num_path].cap_icmp_serialnum = 0;
+                            cap_paramp[num_path].cap_RTT_SUM = TOO_LARGE_DELAY;
+                            cap_paramp[num_path].cap_RTT1 = TOO_LARGE_DELAY;
+                            cap_paramp[num_path].cap_RTT2 = TOO_LARGE_DELAY;
+                            cap_paramp[num_path].cap_C_min = TOO_LARGE_DELAY;
+                            cap_paramp[num_path].cap_C_max = 0;
+                            cap_paramp[num_path].cap_C = 0;
+                            cap_paramp[num_path].cap_run = 1;
+                            cap_paramp[num_path].cap_variance = 0;
+                            cap_paramp[num_path].cap_recv_num = 0;
+                            cap_paramp[num_path].packet_pairs_sent = 1;
+
+
                         } 
                         else 
                         {
@@ -484,7 +552,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                         cap_paramp[num_path].cap_RTT_SUM = TOO_LARGE_DELAY;
                         cap_paramp[num_path].cap_RTT1 = TOO_LARGE_DELAY;
                         cap_paramp[num_path].cap_RTT2 = TOO_LARGE_DELAY;
-                        cap_paramp[num_path].cap_C_min = 100000000;
+                        cap_paramp[num_path].cap_C_min = TOO_LARGE_DELAY;
                         cap_paramp[num_path].cap_C_max = 0;
                         cap_paramp[num_path].cap_C = 0;
                         cap_paramp[num_path].cap_recv_num = 0;
@@ -589,8 +657,6 @@ static int fill_packet(int num_path)
     skb_put(cap_paramp[num_path].cap_skb, datalen);
 
 
-//============================================================================== cs218 needs review!
-
     w = (u_short *)icmph;
     len = icmp_len;
     sum = 0;
@@ -621,7 +687,6 @@ static int fill_packet(int num_path)
     sum += (sum >> 16);                     /* add carry */
     answer = ~sum;                          /* truncate to 16 bits */
     icmph->checksum = answer;
-//==============================================================================
 
     return 1;
 }
@@ -648,6 +713,17 @@ static int write_proc_capprobe_if(struct file* file, const char* buffer, unsigne
     copy_from_user(cap_device, buffer, count);
     cap_device[count-1] = '\0';
 
+    if (strncmp(cap_device, "stop", 4) == 0)
+    {
+        int i;
+        for (i = 0; i < MAX_NUM_PATH; i ++)
+        {
+            del_timer(&(cap_paramp[i].tl));
+        }
+
+        return count;
+    }
+
     int i;
     int j;
     int num_path;
@@ -668,8 +744,6 @@ static int write_proc_capprobe_if(struct file* file, const char* buffer, unsigne
     }
 
     max_interface = num_path;
-
-
 
     ////MOD_DEC_USE_COUNT;
     return k;
@@ -770,35 +844,46 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
     // strncpy(cap_paramp[1].cap_device, "eth0", 4);
 
 
-    // CS218: reading from proc/net/route file -----------------------------------------------------
+    // // CS218: reading from proc/net/route file -----------------------------------------------------
 
-    struct file *f;
-    char buf[1024];
-    struct in_addr addr;
-    mm_segment_t fs;
+    // struct file *f;
+    // char buf[1024];
+    // struct in_addr addr;
+    // mm_segment_t fs;
 
-    memset(buf, 0, 1024);
+    // memset(buf, 0, 1024);
 
-    f = filp_open("/proc/net/route", O_RDONLY, 0);
-    if(f == NULL)
-        printk(KERN_ALERT "filp_open error!!.\n");
-    else{
-        // Get current segment descriptor
-        fs = get_fs();
-        // Set segment descriptor associated to kernel space
-        set_fs(get_ds());
-        // Read the file
-        f->f_op->read(f, buf, 1024, &f->f_pos);
-        set_fs(fs);
-        // See what we read from file
-        printk(KERN_INFO "buf:%s\n",buf);
-    }
-    filp_close(f,NULL);
+    // f = filp_open("/proc/net/route", O_RDONLY, 0);
+    // if(f == NULL)
+    //     printk(KERN_ALERT "filp_open error!!.\n");
+    // else{
+    //     // Get current segment descriptor
+    //     fs = get_fs();
+    //     // Set segment descriptor associated to kernel space
+    //     set_fs(get_ds());
+    //     // Read the file
+    //     f->f_op->read(f, buf, 1024, &f->f_pos);
+    //     set_fs(fs);
+    //     // See what we read from file
+    //     printk(KERN_INFO "buf:%s\n",buf);
+    // }
+    // filp_close(f,NULL);
 
-    // CS218: reading from proc/net/route file ------------------------------------------------------
+    // // CS218: reading from proc/net/route file ------------------------------------------------------
 
     copy_from_user(dest_ip, buffer, count);
     dest_ip[count-1] = '\0';
+
+    if (strncmp(dest_ip, "stop", 4) == 0)
+    {
+        int i;
+        for (i = 0; i < MAX_NUM_PATH; i ++)
+        {
+            del_timer(&(cap_paramp[i].tl));
+        }
+
+        return count;
+    }
 
     int j;
     num_path = 0;
@@ -881,8 +966,11 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
         setup_timer(&(cap_paramp[num_path].tl), capprobe_main, num_path);                   //initialize timer to trigger capprobe_main
     }
 
-    mod_timer(&(cap_paramp[0].tl), jiffies + msecs_to_jiffies(start_capprobe_after));       //set expire time to 
-    mod_timer(&(cap_paramp[1].tl), jiffies + msecs_to_jiffies(start_capprobe_after + 200));       //set expire time to 
+    for (i = 0; i < max_interface; i ++)
+    {
+        mod_timer(&(cap_paramp[i].tl), jiffies + msecs_to_jiffies(start_capprobe_after + 200*i));
+    }
+
     return count;
 }
 
@@ -919,8 +1007,11 @@ static int __init capprobe_init(void)
 
 static void __exit capprobe_cleanup(void)
 {
-    del_timer(&(cap_paramp[0].tl));
-    del_timer(&(cap_paramp[1].tl));
+    int i;
+    for (i = 0; i < MAX_NUM_PATH; i ++)
+    {
+        del_timer(&(cap_paramp[i].tl));
+    }
     remove_proc_entry("probe_info", NULL);
     remove_proc_entry("device", NULL);
 }
