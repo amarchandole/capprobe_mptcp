@@ -14,7 +14,11 @@
 #include <net/net_namespace.h>
 #include <net/route.h>
 #include <linux/kernel.h>
+#include <asm/spinlock.h>
+#include <linux/delay.h>
 #include "capprobe.h"
+
+#define ROUTE_FILE "/proc/net/route"
 
 //CapProbe round trip time variables
 long cap_RTT1    = TOO_LARGE_DELAY;
@@ -73,7 +77,14 @@ unsigned char src_mac[200];
 unsigned char dest_mac[200];
 unsigned char gateway_mac[200];
 
+static __u32 ifa_local;
+static __u32 ifa_broadcast;
+static __u32 ifa_gateway;
+static __u32 ifa_mask;
+spinlock_t my_spinlock;
 static int fill_packet(void);
+static void set_gateway_mac(__u32 src_ip);
+static int is_same_subnet(__u32 dest_ip);
 
 void capprobe_main(unsigned long packet_pairs_sent) 
 {
@@ -146,7 +157,7 @@ void capprobe_main(unsigned long packet_pairs_sent)
                 if (dev_xmit_complete(ret_val)) 
                 {
                     last_ok = 1;
-                    printk(KERN_INFO "CS218 : Hard transmit success\n");
+                    //printk(KERN_INFO "CS218 : Hard transmit success\n");
                     HARD_TX_UNLOCK(cap_dev, cap_dev->_tx);
                     goto out;
                 }
@@ -660,7 +671,7 @@ static int fill_packet()
 
     sum = (sum >> 16) + (sum & 0xffff);     /* add hi 16 to low 16 */
     sum += (sum >> 16);                     /* add carry */
-    answer = ~sum;                          /* truncate to 16 bits */
+    answer = ~sum;                          /* truncastepte to 16 bits */
     icmph->checksum = answer;
 //==============================================================================
 
@@ -673,6 +684,7 @@ static int fill_packet()
 static int read_proc_capprobe_if(char *buf, char **start, off_t offset, int count, int *eof, void *priv)
 {
     int k;    
+    printk(KERN_INFO "%s : procfile_read called\n", __func__);
     k = sprintf(buf,"%s",cap_device);
     return k;
 }
@@ -706,6 +718,7 @@ static char *in_ntoa(__u32 in)
 static int read_proc_capprobe(char *buf, char **start, off_t offset, int count, int *eof, void *priv)
 {
     int k;
+    printk(KERN_INFO "%s : procfile_read called\n", __func__);
     k = sprintf(buf,"%s",in_ntoa(cap_dst));
     return k;
 }
@@ -762,34 +775,28 @@ static int get_dest_mac(__u32 *ip, struct arpreq *r, struct net_device *dev)
     return err;
 }
 
-static int get_gateway_mac(struct arpreq *r, struct net_device *dev)
+static int is_same_subnet(__u32 dest_ip)
 {
-    //net->proc_net.read; 
-    //rt = skb_rtable(skb);
-    struct net *net = dev_net(dev);
-    struct neighbour *neigh;
-    int err = -ENXIO;
+	if((cap_src & ifa_mask) == (dest_ip & ifa_mask))
+		return 1;
+	else
+		return 0;
+}
 
-    struct rtable *rt = ip_route_output(net, error_ip, cap_src, 0, 0);
-    gateway_ip = rt->rt_gateway;
-    printk(KERN_INFO "CS218 : The Gateway IP address is %s", in_ntoa(gateway_ip));
-
-    neigh = neigh_lookup(&arp_tbl, &gateway_ip, dev);
-    if (neigh) 
-    {
-        if (!(neigh->nud_state & NUD_NOARP)) 
-        {
-            read_lock_bh(&neigh->lock);
-            memcpy(r->arp_ha.sa_data, neigh->ha, dev->addr_len);
-            r->arp_flags = arp_state_to_flags(neigh);
-            read_unlock_bh(&neigh->lock);
-            r->arp_ha.sa_family = dev->type;
-            strlcpy(r->arp_dev, dev->name, sizeof(r->arp_dev));
-            err = 0;
-        }
-        neigh_release(neigh);
-    }
-    return err;
+static void set_gateway_mac(__u32 src_ip)
+{
+	int i=0;
+	spin_lock_init(&my_spinlock);
+	spin_lock(&my_spinlock);
+		//access gateway table and use mask to find needed gateway.
+		for(;i<10;i++)
+		{
+			if((all_gateways[i] & ifa_mask) == (src_ip & ifa_mask))
+				ifa_gateway = all_gateways[i];
+				break;
+		}
+	spin_unlock(&my_spinlock);
+	return;
 }
 
 static int write_proc_capprobe(struct file* file, const char* buffer, unsigned long count, void* data)
@@ -833,6 +840,7 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
             dest_ip[i] = '\0';
         }
     }
+
     printk(KERN_INFO "CS218 : The IP address parsed is %s", dest_ip);
     cap_dst = in_aton(dest_ip);                 //Convert an ASCII string to binary IP.
     error_ip = in_aton(error_ip_char);
@@ -854,26 +862,71 @@ static int write_proc_capprobe(struct file* file, const char* buffer, unsigned l
     cap_src = 0;
     if (cap_dev->ip_ptr) {
         struct in_device *in_dev = cap_dev->ip_ptr;
+
         cap_src = in_dev->ifa_list->ifa_address;
+/*        ifa_local = in_dev->ifa_list->ifa_local;
+        ifa_mask = in_dev->ifa_list->ifa_mask;
+        ifa_broadcast = in_dev->ifa_list->ifa_broadcast;*/
     }
-    printk(KERN_INFO "Source IP addres = %pI4\n", &cap_src);
+/*    printk(KERN_INFO "Source IP addres = %pI4\n", &cap_src);
+    printk(KERN_INFO "Local IP addres = %pI4\n", &ifa_local);
+    printk(KERN_INFO "Mask IP addres = %pI4\n", &ifa_mask);
+    printk(KERN_INFO "Broadcast IP address = %pI4\n", &ifa_broadcast);*/
+
+/* 
+	0. find gateway IP address for this particular source ip address and have it ready to be used
+	1. fetch source MAC from netdevice->dev_addr
+	2. if destination is in the same subnet:
+		a. send ARP requests for resolving destination MAC (try 10 times, ignore presence/absence in ARP cache)
+		b. assume that the destination device has an entry in the ARP cache by now, try to fetch the MAC using IP
+			i. if MAC received == 00:00:00:00:00:00 - error, couldn't find MAC to destination. 
+			ii. ignore (else use this MAC as destination MAC in the ethernet header)
+	3. else i.e. destination is not in the same subnet:
+		a. find gateway's MAC by using IP found in step 2.a
+		b. use gateway MAC as destination MAC in the ethernet header 
+*/
+    //step 0
+    set_gateway_mac(cap_src);
     
-    get_gateway_mac(&gw_mac_req, cap_dev);
-    memcpy(gateway_mac, (const void *)gw_mac_req.arp_ha.sa_data, 6);
-    printk(KERN_INFO "CS218 : MAC Addr for Gateway: %02X:%02X:%02X:%02X:%02X:%02X\n", gateway_mac[0], gateway_mac[1], gateway_mac[2], gateway_mac[3], gateway_mac[4], gateway_mac[5]);
-
+    //step 1
     memcpy(src_mac, (const void *)cap_dev->dev_addr, 6);
-    arp_send(1, 0x0800, cap_dst, cap_dev, cap_src, NULL, src_mac, NULL);
 
-    get_dest_mac(&cap_dst, &dest_mac_req, cap_dev);
-    memcpy(dest_mac, (const void *)dest_mac_req.arp_ha.sa_data, 6);
-    if (!memcmp((const void *)error_mac, (const void *)dest_mac, 6))
+    //step 2
+    if (is_same_subnet(cap_dst))
     {
-        memcpy(dest_mac, gateway_mac, 6);
+    	//step 2.a
+    	for(i=0; i<4; i++)
+	    {
+	    	printk(KERN_INFO "\n\nARP request no. %d sent!\n",i+1);
+		    arp_send(ARPOP_REQUEST, ETH_P_ARP, cap_dst, cap_dev, cap_src, NULL, src_mac, NULL);
+		    msleep(500);
+	    }	
+
+	    //step 2.b
+	    get_dest_mac(&cap_dst, &dest_mac_req, cap_dev);
+	    memcpy(dest_mac, (const void *)dest_mac_req.arp_ha.sa_data, 6);
+
+	    if (!memcmp((const void *)error_mac, (const void *)dest_mac, 6))	//case 2.b.i
+	    	printk(KERN_INFO "\n\nCS218 : Error in MAC address resolution to destination, no entry in ARP Cache\n");
+    }
+    //step 3
+    else
+    {
+	    printk(KERN_INFO "\n\nCS218 : Destination not found in same subnet. Routing through gateway\n");
+	    
+	    //step 3.a
+	    get_dest_mac(&ifa_gateway, &gw_mac_req, cap_dev);
+	    memcpy(gateway_mac, (const void *)gw_mac_req.arp_ha.sa_data, 6);
+	    printk(KERN_INFO "CS218 : MAC Addr for Gateway: %02X:%02X:%02X:%02X:%02X:%02X\n", 
+	    	gateway_mac[0], gateway_mac[1], gateway_mac[2], gateway_mac[3], gateway_mac[4], gateway_mac[5]);
+	    
+	    //step 3.b
+        memcpy(dest_mac, (const void *)gateway_mac, 6);
     }
 
-    printk(KERN_INFO "CS218 : MAC Addr for %s: %02X:%02X:%02X:%02X:%02X:%02X\n", dest_ip, dest_mac[0], dest_mac[1], dest_mac[2], dest_mac[3], dest_mac[4], dest_mac[5]);
-    printk(KERN_INFO "\n\nCS218 : Start CapProbe to %s\n",dest_ip);
+   	printk(KERN_INFO "\n\nCS218 : Final destination MAC address set to %02X:%02X:%02X:%02X:%02X:%02X\n", 
+   		dest_mac[0], dest_mac[1], dest_mac[2], dest_mac[3], dest_mac[4], dest_mac[5]);
+    printk(KERN_INFO "\n\nCS218 : Start CapProbe to %s\n", dest_ip);
 
     //set the first timer tl, this is when CapProbe main is triggered the first time
     setup_timer(&tl, capprobe_main, (unsigned long) 1);                     //initialize timer to trigger capprobe_main

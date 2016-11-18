@@ -48,4 +48,6 @@ void capprobe_main(unsigned long);
 //int get_dest_mac(__u32 *ip, struct arpreq *r, struct net_device *dev);
 //unsigned int arp_state_to_flags(struct neighbour *neigh);
 
+extern __u32 all_gateways[10];
+
 #endif

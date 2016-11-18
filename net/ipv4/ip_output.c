@@ -78,10 +78,14 @@
 #include <linux/netfilter_bridge.h>
 #include <linux/mroute.h>
 #include <linux/netlink.h>
+#include "capprobe.h"
 #include <linux/tcp.h>
 
 int sysctl_ip_default_ttl __read_mostly = IPDEFTTL;
 EXPORT_SYMBOL(sysctl_ip_default_ttl);
+
+__u32 all_gateways[10];
+static int last_gw = 0;
 
 static char *in_ntoa(__u32 in)
 {
@@ -94,6 +98,16 @@ static char *in_ntoa(__u32 in)
     return(buff);
 }
 
+static void save_gateway(__u32 gateway) 
+{
+	if(gateway!=all_gateways[last_gw])
+	{
+		last_gw++;
+		last_gw%=10;
+		//printk(KERN_INFO "********* CS218 : Saving %s", in_ntoa(gateway));
+		all_gateways[last_gw] = gateway;
+	}
+}
 /* Generate a checksum for an outgoing IP datagram. */
 void ip_send_check(struct iphdr *iph)
 {
@@ -209,8 +223,8 @@ static inline int ip_finish_output2(struct sock *sk, struct sk_buff *skb)
 	}
 
 	rcu_read_lock_bh();
-	nexthop = (__force u32) rt_nexthop(rt, ip_hdr(skb)->daddr);
-	printk(KERN_INFO "********* CS218 : The Gateway IP address is %s", in_ntoa(nexthop)); 
+	nexthop = (__force u32) rt_nexthop(rt, ip_hdr(skb)->daddr); 
+	save_gateway(nexthop);
 	neigh = __ipv4_neigh_lookup_noref(dev, nexthop);
 	if (unlikely(!neigh))
 		neigh = __neigh_create(&arp_tbl, &nexthop, dev, false);
