@@ -20,7 +20,7 @@
 
 #define ROUTE_FILE "/proc/net/route"
 
-//CapProbe round trip time variables
+//CapProbe round trip time variables.
 long cap_RTT1    = TOO_LARGE_DELAY;
 long cap_RTT2    = TOO_LARGE_DELAY;
 long cap_RTT_SUM = TOO_LARGE_DELAY;
