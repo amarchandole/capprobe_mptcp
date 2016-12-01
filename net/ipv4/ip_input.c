@@ -380,6 +380,9 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 	const struct iphdr *iph;
 	u32 len;
 
+	struct timeval capprobe_tv;
+	do_gettimeofday(&capprobe_tv);
+
 	/* When the interface is in promisc. mode, drop all the crap
 	 * that it receives, do not try to analyse it.
 	 */
@@ -455,7 +458,7 @@ int ip_rcv(struct sk_buff *skb, struct net_device *dev, struct packet_type *pt, 
 
 	//cs218
 	if (iph->protocol == IPPROTO_ICMP)
-		process_capprobe(skb, dev, iph);
+		process_capprobe(skb, dev, iph, &capprobe_tv);
 
 	return NF_HOOK(NFPROTO_IPV4, NF_INET_PRE_ROUTING, NULL, skb,
 		dev, NULL,

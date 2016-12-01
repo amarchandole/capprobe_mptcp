@@ -144,31 +144,33 @@ void capprobe_main(int num_path)
         }
     }
 
-    if (cap_paramp[num_path].cap_recv_num<5) 
-    {
-        if (cap_paramp[num_path].cap_RTT2>=TOO_LARGE_DELAY)
-        {
-                mod_timer(&(cap_paramp[num_path].tl), jiffies + msecs_to_jiffies(500));
-        }
-        else
-        {
-            if (cap_paramp[num_path].rtt2 < 5 * cap_paramp[num_path].cap_RTT2)
-            {
-                    mod_timer(&(cap_paramp[num_path].tl), jiffies + msecs_to_jiffies(((cap_paramp[num_path].rtt2 * 10/8) / SEC_TO_USEC) * 1000));
-            }
-            else
-            {
-                    mod_timer(&(cap_paramp[num_path].tl), jiffies + msecs_to_jiffies(500));
-            }
-        }
-    } 
-    else 
-    {
-        long send_rate = cap_paramp[num_path].cap_C / 20; // Mbps; 5% of capacity
-        long pp_interval = SEC_TO_USEC * cap_paramp[num_path].cap_size * 8 / send_rate; //
-        mod_timer(&(cap_paramp[num_path].tl), jiffies + msecs_to_jiffies(pp_interval / 1000));
+    // if (cap_paramp[num_path].cap_recv_num<5) 
+    // {
+    //     if (cap_paramp[num_path].cap_RTT2>=TOO_LARGE_DELAY)
+    //     {
+    //             mod_timer(&(cap_paramp[num_path].tl), jiffies + msecs_to_jiffies(500));
+    //     }
+    //     else
+    //     {
+    //         if (cap_paramp[num_path].rtt2 < 5 * cap_paramp[num_path].cap_RTT2)
+    //         {
+    //                 mod_timer(&(cap_paramp[num_path].tl), jiffies + msecs_to_jiffies(((cap_paramp[num_path].rtt2 * 10/8) / 1000000) * 1000));
+    //         }
+    //         else
+    //         {
+    //                 mod_timer(&(cap_paramp[num_path].tl), jiffies + msecs_to_jiffies(500));
+    //         }
+    //     }
+    // } 
+    // else 
+    // {
+    //     unsigned long long send_rate = 100 * cap_paramp[num_path].cap_C / 20; // Mbps; 5% of capacity
+    //     unsigned long long pp_interval = 1000000 * cap_paramp[num_path].cap_size * 8 / send_rate; //
+    //     mod_timer(&(cap_paramp[num_path].tl), jiffies + msecs_to_jiffies(pp_interval / 1000));
 
-    }
+    // }
+
+    mod_timer(&(cap_paramp[num_path].tl), jiffies + msecs_to_jiffies(50));
 
     //modify the timer_list expiry time with a new time that is current time + burst_interval
     //mod_timer(&tl, jiffies + msecs_to_jiffies(burst_interval));
@@ -192,11 +194,11 @@ static void logging_results(int arg)
     }
 
     struct file *f;
-    char buf[128];
+    char buf[256];
     struct in_addr addr;
     mm_segment_t fs;
 
-    memset(buf, 0, 128);
+    memset(buf, 0, 256);
 
     f = filp_open("/tmp/CapProbe_Log", O_RDWR|O_CREAT|O_APPEND, 0644);
     if(f == NULL)
@@ -208,7 +210,7 @@ static void logging_results(int arg)
         set_fs(KERNEL_DS);
         // Write to the file
 
-        sprintf(buf, "Choose interface %s (path %d), the capacity is %ld.%06ld Mbps\n", cap_paramp[max_c_index].cap_device, max_c_index + 1, cap_paramp[max_c_index].cap_C/1000000, cap_paramp[max_c_index].cap_C%1000000);
+        sprintf(buf, "Choose interface %s (path %d), the capacity is %lld Kbps\n, the other interface capacity is %lld Kbps\n\n\n", cap_paramp[max_c_index].cap_device, max_c_index + 1, cap_paramp[max_c_index].cap_C, cap_paramp[(max_c_index+1)%2].cap_C);
 
         vfs_write(f, buf, sizeof(buf), &f->f_pos);
         //f->f_op->write(f, (char*)buf, 8, &f->f_pos);
@@ -218,13 +220,13 @@ static void logging_results(int arg)
     }
     filp_close(f,NULL);
 
-    mod_timer(&capprobe_logging_tl, jiffies + msecs_to_jiffies(5000));
+    mod_timer(&capprobe_logging_tl, jiffies + msecs_to_jiffies(10000));
     capprobe_logging_tl.data = 1;
 }
 
-void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct iphdr *iph)
+void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct iphdr *iph, struct timeval *tv)
 {
-    long C;
+    unsigned long long C;
     u8 *tmphdr;
     u8 serialnum1, serialnum2, serialnum;
     u8 id1,id2;
@@ -234,9 +236,9 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
     int id;
     int tmpvar;
     int i, j;
-    struct timeval tv;
+    //struct timeval tv;
     __u32 pksize;
-    do_gettimeofday(&tv);
+    //do_gettimeofday(&tv);
 
     //icmph = skb->h.icmph;     //cs218_prob    not being used anywhere right now. Commented as 4.1 has no skb->h.icmph
 
@@ -286,36 +288,46 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                 if (tmpvar == cap_paramp[num_path].cap_serialnum[j])                     //1st packet of the packet pair found
                 { 
                     //store receive time for this packet in the array
-                    cap_paramp[num_path].cap_recv1_sec[j] = tv.tv_sec;
-                    cap_paramp[num_path].cap_recv1_usec[j] = tv.tv_usec;
+                    cap_paramp[num_path].cap_recv1_sec[j] = tv->tv_sec;
+                    cap_paramp[num_path].cap_recv1_usec[j] = tv->tv_usec;
                     //printk(KERN_INFO "CS218 : CapProbe first packet received\n");
                     break;
                 } 
                 else if (tmpvar == cap_paramp[num_path].cap_serialnum[j]+1)              //2nd packet of the packet pair found
                 {   
                     //store receive time for this packet in the array
-                    cap_paramp[num_path].cap_recv2_sec[j] = tv.tv_sec;
-                    cap_paramp[num_path].cap_recv2_usec[j] = tv.tv_usec;
+                    cap_paramp[num_path].cap_recv2_sec[j] = tv->tv_sec;
+                    cap_paramp[num_path].cap_recv2_usec[j] = tv->tv_usec;
                     //printk(KERN_INFO "CS218 : CapProbe second packet received\n");
 
                     if (cap_paramp[num_path].cap_recv1_sec[j]>0 && cap_paramp[num_path].cap_recv1_usec[j]>0) 
                     {
                         //remove SEC_TO_USEC
-                        cap_paramp[num_path].disp = SEC_TO_USEC * (cap_paramp[num_path].cap_recv2_sec[j] - cap_paramp[num_path].cap_recv1_sec[j]) + (cap_paramp[num_path].cap_recv2_usec[j] - cap_paramp[num_path].cap_recv1_usec[j]);
-                        cap_paramp[num_path].rtt1 = SEC_TO_USEC * (cap_paramp[num_path].cap_recv1_sec[j] - cap_paramp[num_path].cap_send_sec[j]) + (cap_paramp[num_path].cap_recv1_usec[j] - cap_paramp[num_path].cap_send_usec[j]);
-                        cap_paramp[num_path].rtt2 = SEC_TO_USEC * (cap_paramp[num_path].cap_recv2_sec[j] - cap_paramp[num_path].cap_send_sec[j]) + (cap_paramp[num_path].cap_recv2_usec[j] - cap_paramp[num_path].cap_send_usec[j]);
+
+                        cap_paramp[num_path].disp = 1000000 * (cap_paramp[num_path].cap_recv2_sec[j] - cap_paramp[num_path].cap_recv1_sec[j]) + (cap_paramp[num_path].cap_recv2_usec[j] - cap_paramp[num_path].cap_recv1_usec[j]);
+                        cap_paramp[num_path].rtt1 = 1000000 * (cap_paramp[num_path].cap_recv1_sec[j] - cap_paramp[num_path].cap_send_sec[j]) + (cap_paramp[num_path].cap_recv1_usec[j] - cap_paramp[num_path].cap_send_usec[j]);
+                        cap_paramp[num_path].rtt2 = 1000000 * (cap_paramp[num_path].cap_recv2_sec[j] - cap_paramp[num_path].cap_send_sec[j]) + (cap_paramp[num_path].cap_recv2_usec[j] - cap_paramp[num_path].cap_send_usec[j]);
                         cap_paramp[num_path].rtt = cap_paramp[num_path].rtt1 + cap_paramp[num_path].rtt2;
 
-                        if (cap_paramp[num_path].disp>0 && cap_paramp[num_path].rtt1>0 && cap_paramp[num_path].rtt2>0 && cap_paramp[num_path].rtt>0 && cap_paramp[num_path].rtt<TOO_LARGE_DELAY) 
+                        if (cap_paramp[num_path].disp < 50)
                         {
-                            C = 8 * pksize * SEC_TO_USEC / cap_paramp[num_path].disp;    // bits per sec             //cs218_prob
+                            cap_paramp[num_path].rtt1 += 5000000;
+                            cap_paramp[num_path].rtt2 += 5000000;
+                            cap_paramp[num_path].rtt = cap_paramp[num_path].rtt1 + cap_paramp[num_path].rtt2;
+                        }
+                        //printk(KERN_INFO "recv 2: %lld, recv 1: %lld\n", cap_paramp[num_path].cap_recv2_usec[j], cap_paramp[num_path].cap_recv1_usec[j]);
+                        
+                        if (cap_paramp[num_path].disp>0 && cap_paramp[num_path].rtt1>0 && cap_paramp[num_path].rtt2>0 && cap_paramp[num_path].rtt>0 && cap_paramp[num_path].rtt<TOO_LARGE_DELAY) 
+                        {       
+                            C = 8 * pksize * 1000 / cap_paramp[num_path].disp;    // bits per sec             //cs218_prob
+                            printk(KERN_INFO "\n!!!!!!!!!!!!!! %lld, %lld, C = %lld\n",8 * pksize * SEC_TO_USEC, cap_paramp[num_path].disp, C);
                             if (C > cap_paramp[num_path].cap_C_max) 
                                 cap_paramp[num_path].cap_C_max = C;
                             if (C < cap_paramp[num_path].cap_C_min) 
                                 cap_paramp[num_path].cap_C_min = C;
                             if (cap_paramp[num_path].rtt<cap_paramp[num_path].cap_RTT_SUM) 
                             {
-                                long diff_c = cap_paramp[num_path].cap_C - C;
+                                unsigned long long diff_c = cap_paramp[num_path].cap_C - C;
                                 if (diff_c<0) 
                                     diff_c = 0 - diff_c;            //cs218_prob
 
@@ -362,9 +374,12 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                 }
             }
 
-            if (cap_paramp[num_path].cap_C_same2 >= CAP_SAME_MAX || (cap_paramp[num_path].cap_recv_num >= CAP_SAMPLES && j < MAX_BURST_SIZE && cap_paramp[num_path].cap_C_same >= CAP_SAME) ) 
+            if (cap_paramp[num_path].disp < 50)
             {
-                long diff_cap_RTT_SUM;
+            }
+            else if (cap_paramp[num_path].cap_C_same2 >= CAP_SAME_MAX || (cap_paramp[num_path].cap_recv_num >= CAP_SAMPLES && j < MAX_BURST_SIZE && cap_paramp[num_path].cap_C_same >= CAP_SAME) ) 
+            {
+                unsigned long long diff_cap_RTT_SUM;
                 //printk(KERN_INFO "CS218 : Further calculate difference of RTT\n");
                 diff_cap_RTT_SUM = cap_paramp[num_path].cap_RTT_SUM - cap_paramp[num_path].cap_RTT1 - cap_paramp[num_path].cap_RTT2;
                 diff_cap_RTT_SUM *= 1000;           //to maintain precision
@@ -374,7 +389,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                 if (cap_paramp[num_path].cap_C_same2>=CAP_SAME_MAX||diff_cap_RTT_SUM < 10)           //previously 0.01, changed to 10 because ---> diff_cap_RTT_SUM *= 1000;         //to maintain precision
                 {
                     long total_time;
-                    long diff_c, avg_c;
+                    unsigned long long diff_c, avg_c;
 
                     //cs218 large printk section removed, verify if needed later
                     //printk(KERN_INFO "CS218 : Algorithm converged check\n");
@@ -382,7 +397,7 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                     do_gettimeofday(&(cap_paramp[num_path].cap_time_end));
 
                     //del_timer(&tl);
-                    total_time = SEC_TO_USEC * (cap_paramp[num_path].cap_time_end.tv_sec - cap_paramp[num_path].cap_time_start.tv_sec) +
+                    total_time = 1000000 * (cap_paramp[num_path].cap_time_end.tv_sec - cap_paramp[num_path].cap_time_start.tv_sec) +
                     (cap_paramp[num_path].cap_time_end.tv_usec - cap_paramp[num_path].cap_time_start.tv_usec);
 
                     // calculate variance
@@ -402,12 +417,16 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                     if (cap_paramp[num_path].cap_C_same2 >= CAP_SAME_MAX) 
                     {
                         cap_paramp[num_path].cap_size = 0;
-                        printk(KERN_INFO "CS218 : Stable CapProbe for path: %u Finished! Total time = %ld.%06ld sec C = %ld.%03ld\n", num_path + 1,
-                            total_time/1000000, total_time % 1000000,
-                            ((long)(cap_paramp[num_path].cap_C*10))/10, (long)(cap_paramp[num_path].cap_C*1000)%1000);
+                        printk(KERN_INFO "CS218 : Stable CapProbe for path: %u Finished! Total time = %ld.%06ld sec C = %lld\n", num_path + 1,
+                            total_time/1000000, total_time % 1000000, cap_paramp[num_path].cap_C);
+
+                        printk(KERN_INFO "dispersion: %ld\n", cap_paramp[num_path].disp);
+
+                        //del_timer(&(cap_paramp[num_path].tl));
 
                         //logging_results(num_path, cap_paramp[num_path].cap_C);
-
+                        cap_paramp[num_path].cap_C_same = 0;
+                        cap_paramp[num_path].cap_C_same2 = 0;
                         cap_paramp[num_path].CAP_INIT_SIZE_1 = INIT_SIZE_1;
                         cap_paramp[num_path].CAP_INIT_SIZE_2 = INIT_SIZE_2;
                         cap_paramp[num_path].cap_size = cap_paramp[num_path].CAP_INIT_SIZE_1;
@@ -423,6 +442,17 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                         cap_paramp[num_path].cap_variance = 0;
                         cap_paramp[num_path].cap_recv_num = 0;
                         cap_paramp[num_path].packet_pairs_sent = 1;
+
+                        for (i=0; i<MAX_BURST_SIZE; i++) 
+                        {
+                            cap_paramp[num_path].cap_serialnum[i] = -1;
+                            cap_paramp[num_path].cap_send_sec[i] = -1;
+                            cap_paramp[num_path].cap_send_usec[i] = -1;
+                        }
+
+                        //mod_timer(&(cap_paramp[num_path].tl), jiffies + msecs_to_jiffies(3000));
+
+
                     } 
                     else if (cap_paramp[num_path].cap_phase == CAP_PHASE_1) 
                     {
@@ -451,9 +481,12 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                         {
                             //del_timer(&(cap_paramp[num_path].tl));
                             cap_paramp[num_path].cap_size = 0;
-                            printk(KERN_INFO "CS218 : CapProbe Finished! Total time = %ld.%06ld sec C = %ld.%03ld\n",
-                                total_time/1000000, total_time % 1000000,
-                                ((long)(avg_c*10))/10, (long)(avg_c*1000)%1000);
+                            printk(KERN_INFO "CS218 : CapProbe Finished! Total time = %ld.%06ld sec C = %lld\n",
+                                total_time/1000000, total_time % 1000000, avg_c);
+
+                            cap_paramp[num_path].cap_C = avg_c;
+
+                            //del_timer(&(cap_paramp[i].tl));
 
                             //logging_results(num_path, cap_paramp[num_path].cap_C);
 
@@ -471,7 +504,18 @@ void process_capprobe(struct sk_buff *skb, struct net_device *dev, const struct 
                             cap_paramp[num_path].cap_run = 1;
                             cap_paramp[num_path].cap_variance = 0;
                             cap_paramp[num_path].cap_recv_num = 0;
+                            cap_paramp[num_path].cap_C_same = 0;
+                            cap_paramp[num_path].cap_C_same2 = 0;
                             cap_paramp[num_path].packet_pairs_sent = 1;
+
+                            for (i=0; i<MAX_BURST_SIZE; i++) 
+                            {
+                                cap_paramp[num_path].cap_serialnum[i] = -1;
+                                cap_paramp[num_path].cap_send_sec[i] = -1;
+                                cap_paramp[num_path].cap_send_usec[i] = -1;
+                            }
+
+                            //mod_timer(&(cap_paramp[num_path].tl), jiffies + msecs_to_jiffies(3000));
 
 
                         } 
